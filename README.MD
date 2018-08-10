@@ -4,3 +4,25 @@ PoreMongo is a re-imagination of Nick Loman's [`poredb`](https://github.com/nick
 
 PoreMongo is under development, stay tuned!
 
+### Usage (Development Version)
+
+Create an instance of `PoreMongo` by passing your MongoDB connection string (URI). You can learn more about the format of the connection string from the [reference manual for MongoDB](https://docs.mongodb.com/manual/reference/connection-string/).
+
+Usually the format is something like this:
+
+```python
+pongo = PoreMongo(uri="mongodb://user_name:secret_password@server_ip:server_port/database_name")
+```
+You can now inititate the connection:
+
+```python
+pongo.connect()
+```
+
+The first step is to index your `Fast5` files from a completed sequencing run in their respective directory. This is achieved with the `index` method of `PoreMongo`.
+
+Sequencing runs can generate a large number of files, so the initial indexing will take some time, especially when specifying a recursive walk through the specified directory. This is often necessary due to the `pass/fail` and enumerated sequence run directory structure forced by ONT. You can speed up the process by either indexing the specific directory containing the `Fast5` files or by specifying the number of processors for parallel indexing.
+
+```python
+pongo.disconnect()
+```
