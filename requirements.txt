@@ -1,0 +1,5 @@
+pymongo
+mongoengine
+colorama
+tqdm
+numpy
