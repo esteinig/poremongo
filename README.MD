@@ -1,6 +1,6 @@
 # PoreMongo
 
-PoreMongo is a re-imagination of Nick Loman's [`poredb`](https://github.com/nickloman/poredb) for signal-level data management in MongoDB. It allows the user to connect to a MongoDB server via URI. At this stage, the module is primarily designed to track `Fast5` files and signal-level read information, without storing the actual signal arrays. Users can tag and comment on file collections for custom data selections, spanning sequencing runs, flowcells or experiments. Files can be efficiently selected, sampled and filtered in the database via simplified methods accessible from instances of `PoreMongo`. Computationally expensive operations (indexing or copying files, extracting signal arrays) are therefore decoupled from the data selection process in PoreMongo.
+PoreMongo is a re-imagination of Nick Loman's [`poredb`](https://github.com/nickloman/poredb) for signal-level data management in MongoDB.  At this stage, the module is primarily designed to track `Fast5` files and signal-level read information, without storing the actual signal arrays. Users can tag and comment on file collections for custom data selections, that span sequencing runs, experiments or any other user-defined category. Files can be efficiently selected, sampled and filtered in the database via simplified methods accessible from instances of `PoreMongo`. Computationally expensive operations (indexing or copying files, extracting signal arrays) are therefore decoupled from the data selection process in PoreMongo.
 
 PoreMongo is under development, stay tuned!
 
@@ -13,7 +13,7 @@ Usually the format is something like this:
 ```python
 pongo = PoreMongo(uri="mongodb://user_name:secret_password@server_ip:server_port/database_name")
 ```
-You can now inititate the connection:
+You can now inititate the connection via the `MongoClient` API from `PyMongo`:
 
 ```python
 pongo.connect()
