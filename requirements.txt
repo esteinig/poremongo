@@ -3,3 +3,10 @@ mongoengine
 colorama
 tqdm
 numpy
+pandas
+paramiko
+scp
+scipy
+scikit-image
+watchdog
+apscheduler

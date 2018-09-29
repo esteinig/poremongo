@@ -6,17 +6,27 @@ import json
 import random
 import shutil
 import pymongo
+import pandas
+import paramiko
+import time
+import multiprocessing as mp
+
+from datetime import datetime, timedelta
+from scp import SCPClient
 
 from textwrap import dedent
 from functools import reduce
-import multiprocessing as mp
 from operator import or_, and_
 from colorama import Fore, Style
 
 from mongoengine import connect
 from mongoengine.queryset.visitor import Q
 from mongoengine.errors import NotUniqueError
+from pymongo.errors import ServerSelectionTimeoutError
 
+from apscheduler.schedulers.background import BackgroundScheduler
+
+from poremongo.watchdog import watch_path
 from poremongo.models import Fast5
 
 
@@ -24,32 +34,58 @@ class PoreMongo:
 
     """ API for PoreMongo DB: includes main models: minimal, standard, signal, sequence (increasing size of DB) """
 
-    def __init__(self, uri, config=None):
+    def __init__(self, config=None, uri=None, connect=False, ssh=False, mock=False, verbose=False):
 
         self.uri = uri
 
         if config:
             self._parse_config(config)
 
-        self.verbose = True
+        self.mock = mock
+
+        self.ssh = None
+        self.scp = None
+
+        self.verbose = verbose
 
         self.client = None
         self.db = None
         self.fast5 = None
 
+        if connect:
+            self.connect(ssh=ssh, is_mock=mock)
+
     def _parse_config(self, config):
 
-        with open(config, "r") as config_file:
-            config_dict = json.load(config_file)
-            self.uri = config_dict["uri"]
+        if isinstance(config, str):
+            with open(config, "r") as config_file:
+                config_dict = json.load(config_file)
+                self.config = config_dict
+                try:
+                    self.uri = config_dict["uri"]
+                except KeyError:
+                    raise KeyError("Configuration dictionary must contain key 'uri' to make the connection to MongoDB.")
+        elif isinstance(config, dict):
+            try:
+                self.uri = config["uri"]
+                self.config = config
+            except KeyError:
+                raise KeyError("Configuration dictionary must contain key 'uri' to make the connection to MongoDB.")
+        else:
+            raise ValueError("Config must be string path to JSON file or dictionary.")
 
     def is_connected(self):
 
         return True if self.client else False
 
-    def connect(self, verbose=True, is_mock=False):
+    def connect(self, ssh=False, verbose=True, is_mock=False, **kwargs):
 
-        self.client = connect(host=self.uri, is_mock=is_mock)
+        try:
+            self.client = connect(host=self.uri, is_mock=is_mock, serverSelectionTimeoutMS=10000, **kwargs)
+            self.client.server_info()
+        except ServerSelectionTimeoutError as timeout_error:
+            self.client = None
+            print(timeout_error)
 
         if verbose:
             self.print_connected_message()
@@ -60,18 +96,107 @@ class PoreMongo:
         # Collection: fast5
         self.fast5 = self.db.fast5
 
+        # SSH
+
+        if ssh:
+            self.open_ssh()
+            self.open_scp()
+
     def disconnect(self):
 
         self.client.close()
 
         self.client, self.db, self.fast5 = None, None, None
 
+    def open_scp(self):
+
+        self.scp = SCPClient(self.ssh.get_transport())
+
+        return self.scp
+
+    def close_scp(self):
+
+        self.scp.close()
+
+    def close_ssh(self):
+
+        self.ssh.close()
+
+    def open_ssh(self, config_file=None):
+
+        if config_file:
+            with open(config_file, 'r') as infile:
+                config = json.load(infile)
+                ssh_config = config["ssh"]
+        else:
+            ssh_config = self.config["ssh"]
+
+        self.ssh = self.create_ssh_client(server=ssh_config["server"], port=ssh_config["port"],
+                                          user=ssh_config["user"], password=ssh_config["password"])
+
+        return self.ssh
+
+    @staticmethod
+    def create_ssh_client(server, port, user, password):
+
+        client = paramiko.SSHClient()
+        client.load_system_host_keys()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(server, port, user, password)
+
+        return client
+
     ##########################
-    #   Model: Operations    #
+    #     DB Summaries       #
     ##########################
 
-    # Updates: defined in model methods
-    # Queryset filters: defined in model methods
+    def display(self):
+
+        """
+        Complete database summary displays general information on Fast5 documents contained in DB.
+
+            - total number of documents in DB
+            - total number of unique tags in DB
+            - total number valid / invalid scans
+            - total number that have reads
+            - total number that are 1D / 2D
+
+        """
+
+    @staticmethod
+    def display_tags():
+
+        """
+        Tag summary for collections:
+
+            - list of tags with total number of files, valid/invalid, reads, 1D / 2D
+            - avergae signal length in tag, think about summary statistics on the
+
+        """
+
+        pipe = [
+            {"$match": {"tags": {"$not": {"$size": 0}}}},
+            {"$unwind": "$tags"},
+            {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
+            {"$match": {"count": {"$gte": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 100}
+        ]
+
+        result = list(Fast5.objects.aggregate(*pipe))
+
+        msg = f"Documents per tag in current PoreMongo DB:\n\n"
+        msg += f"{Fore.CYAN}{'Tag':<10}{'Count':>10}{Style.RESET_ALL}\n"
+        msg += "=====================\n\n"
+        for r in result:
+            msg += f"{Fore.YELLOW}{r['_id']:<10}{Style.RESET_ALL}={Fore.GREEN}{r['count']:>10}{Style.RESET_ALL}\n"
+        msg += "\n=====================\n"
+
+        print(msg)
+
+    #########################
+    #   Cleaning DB + QC    #
+    #########################
 
     ##########################
     #   Fast5: Index + Tags  #
@@ -81,42 +206,159 @@ class PoreMongo:
 
     # SELECTION AND MAPPING METHODS
 
-    def simulate(self, api="taeper"):
+    def watch(self, path, callback=None, index=True, recursive=False):
+        """Pomoxis async watchdog to watch path for .fast5
+        files, apply callback function to filepath on event detection.
 
-        """ Simulations of sequencing runs with Taeper and read until with Promoxis integrated into PoreMongo """
+        :param path:
+        :param callback:
+        :param index:
+        :param recursive:
+        :return:
+        """
 
-        pass
+        if index:
+            print("Upserting Fast5 files into Database. Existing models with the "
+                  "same path will be updated. If path is not in database, a new "
+                  "model is inserted.")
+            print(self.fast5)
+            return watch_path(path, self.upsert_callback, recursive=recursive)
+        else:
+            if callback is None:
+                raise ValueError("Must provide callback function for watchdog callback.")
+            return watch_path(path, callback, recursive=recursive)
 
-    def watch(self, thread=False, extension=".fast5", promoxis_async=True):
+    # TODO
+    def upsert_callback(self, fpath):
+        """Callback for upsert of newly detected .fast5 file
+        into database as Fast5 model.
 
-        """ Watch a directory indefinitely and add Fast5 to database as soon as they are generated,
-         use the async feedback loop callback in Promoxis """
+        :param fpath:
+        :return:
+        """
+        fast5 = self._get_doc(fpath, scan_file=True)
+        print(f"Fast5: {time.time()} name={str(fast5.name)}")
 
-        pass
+    def schedule_run(self, fast5, outdir="run_sim_1", sort=True, scale=1.0, timeout=None):
+        """Schedule a run extracted from sorted completion times
+        for reads contained in Fast5 models. Scale aduststs the
+        time intervals between reads. Use with group_runs to
+        extract reads from the same runs.
+
+        :param fast5:
+        :param sort:
+        :param scale:
+        :param outdir:
+        :param timeout:
+        :return:
+        """
+        # Compute difference between completion of reads
+
+        reads = [(read, f5) for f5 in fast5 for read in f5.reads]
+
+        if sort:
+            reads = sorted(reads, key=lambda x: x[0].end_time, reverse=False)
+
+        read_end_times = [read[0].end_time for read in reads]
+
+        time_delta = [0] + [delta/scale for delta in self._delta(read_end_times)]
+
+        scheduler = BackgroundScheduler()
+
+        start = time.time()  # For callback
+        run = datetime.now()  # For scheduler
+        for i, delay in enumerate(time_delta):
+            run += timedelta(seconds=delay)
+            scheduler.add_job(self.copy_read, 'date', run_date=run, kwargs={'read': reads[i][0], 'start': start,
+                                                                            'fast5': reads[i][1], 'outdir': outdir})
+
+        scheduler.start()
+        print(f"Press Ctrl+{'Break' if os.name == 'nt' else 'C'} to exit")
+
+        if not timeout:
+            try:
+                # This is here to simulate application activity (which keeps the main thread alive).
+                while True:
+                    time.sleep(2)
+            except (KeyboardInterrupt, SystemExit):
+                scheduler.shutdown()
+        else:
+            time.sleep(timeout)
+            scheduler.shutdown()
+
+    def copy_read(self, read, start, fast5, outdir):
+
+        os.makedirs(os.path.abspath(outdir), exist_ok=True)
+
+        shutil.copy(fast5.path, os.path.abspath(outdir))
+
+        self._print_read(read.id, start)
 
     @staticmethod
-    def sample(file_objects, limit=3, tags=None, proportion=None, unique=False):
+    def _print_read(name, start):
+
+        now = time.time()
+        elapsed = round(float(now - start), 4)
+        print(f"Read: {time.ctime(now)} elapsed={elapsed} name={name}")
+
+        return now
+
+    @staticmethod
+    def _delta(times):
+
+        return [times[n] - times[n - 1] for n in range(1, len(times))]
+
+    @staticmethod
+    def group_runs(fast5):
+
+        pipeline = [{"$group": {"_id": "$exp_start_time",
+                                "fast5": {"$push": "$_id"}}}]
+
+        run_groups = list(fast5.aggregate(*pipeline, allowDiskUse=True))
+
+        runs = {}
+        for run in run_groups:
+            timestamp = int(run["_id"])
+            entry = {"run": datetime.fromtimestamp(timestamp),
+                     "fast5": run["fast5"]}
+            runs[timestamp] = entry
+
+        print(f"Extracted {len(runs)} {'run' if len(runs) == 1 else 'runs'}.")
+
+        return runs
+
+    @staticmethod
+    def sample(file_objects, limit=3, tags=None, proportion=None, unique=False,
+               exclude=None, return_documents=True):
 
         """ Add query to a queryset (file_objects) to sample a limited number of file objects;
         these can be sampled proportionally by tags. """
 
+        if isinstance(tags, str):
+            tags = [tags]
+
         if tags:
+
+            if exclude:
+                query_pipeline = [{"$match": {"name": {"$nin": exclude}}}]
+            else:
+                query_pipeline = []
 
             # Random sample across given tags:
             if not proportion:
-                print(f"Tags specified, but no proportions, sample {limit} Fast5 across tags: {', '.join(tags)}.")
-                query_pipeline = [
-                    {"$match": {"tags": {"$in": tags}}},
+                print(f"Tags specified, but no proportions, sample {limit} Fast5 from all (&) tags: {tags}")
+                query_pipeline += [
+                    {"$match": {"tags": {"$all": tags}}},
                     {"$sample": {"size": limit}}
                 ]
                 results = list(file_objects.aggregate(*query_pipeline, allowDiskUse=True))
 
             # Equal size of random sample for each tag:
             elif proportion == "equal":
-                print(f"Tags specified, equal proportions, sample {limit} Fast5 for each tag: {', '.join(tags)}.")
+                print(f"Tags specified, equal proportions, sample {limit} Fast5 for each tag: {tags}")
                 results = []
                 for tag in tags:
-                    query_pipeline = [
+                    query_pipeline += [
                         {"$match": {"tags": {"$in": [tag]}}},
                         {"$sample": {"size": limit}}
                     ]
@@ -134,7 +376,7 @@ class PoreMongo:
                 results = []
                 for i in range(len(tags)):
                     lim = int(limit * proportion[i])
-                    query_pipeline = [
+                    query_pipeline += [
                         {"$match": {"tags": {"$in": [tags[i]]}}},
                         {"$sample": {"size": lim}}
                     ]
@@ -151,45 +393,73 @@ class PoreMongo:
         if unique:
             results = list(set(results))
 
-        # List of dictionaries:
-        print("Results:", len(results))
-
-        for r in results:
-            print(r["name"], r["tags"])
+        if return_documents:
+            results = [Fast5(**result) for result in results]
 
         return results
 
-    def copy(self, file_objects, outdir, exist_ok=True, symlink=False, iterate=True, ncpu=1, mp_chunk=100):
+    @staticmethod
+    def to_csv(file_objects, out_file, labels=None, sep=","):
+
+        print(f"Writing file paths of Fast5 documents to {out_file}.")
+
+        data = {"paths": [obj.path for obj in file_objects]}
+
+        if labels:
+            data.update({"labels": labels})
+
+        pandas.DataFrame(data).to_csv(out_file, header=None, index=None, sep=sep)
+
+    def copy(self, file_objects, outdir, exist_ok=True, symlink=False, iterate=False,
+             ncpu=1, chunk_size=100, prefixes=None):
 
         """ Copy or symlink into output directory, use either generator (memory efficient, ncpu = 1) or
         list for memory dependent progbar (ncpu = 1) or multi-processing (speedup, ncpu > 1)"""
 
-        os.makedirs(outdir, exist_ok=exist_ok)
+        # If files are stored on remote server, copy the files using Paramiko and SCP
 
         # Do this as iterator (ncpu = 1, if iterate) or in memory (ncpu > 1, ncpu = 1 if not iterate, has progbar)
 
         if ncpu == 1:
+
+            os.makedirs(outdir, exist_ok=exist_ok)
+
             if iterate:
-                self.link_files(file_objects, outdir=outdir, pbar=None, symlink=symlink)
+                self.link_files(file_objects, outdir=outdir, pbar=None, symlink=symlink,
+                                scp=self.scp, prefixes=prefixes)
             else:
                 file_objects = list(file_objects)
                 with tqdm.tqdm(total=len(file_objects)) as pbar:
-                    self.link_files(file_objects, outdir=outdir, pbar=pbar, symlink=symlink)
+                    self.link_files(file_objects, outdir=outdir, pbar=pbar, symlink=symlink,
+                                    scp=self.scp, prefixes=prefixes)
         else:
+
+            if self.scp:
+                raise ValueError("You are trying to call the copy method with multiprocessing options, "
+                                 "while connected to remote server via SHH. This is currently not "
+                                 "supported by PoreMongo.")
+
+            os.makedirs(outdir, exist_ok=exist_ok)
+
             # Multiprocessing copy of file chunks, in memory:
             file_objects = list(file_objects)
 
-            file_object_chunks = self._chunk_seq(file_objects, mp_chunk)
+            file_object_chunks = self._chunk_seq(file_objects, chunk_size)
             nb_chunks = len(file_object_chunks)
+
+            if prefixes:
+                prefix_chunks = self._chunk_seq(prefixes, chunk_size)
+            else:
+                prefix_chunks = [None for _ in range(nb_chunks)]
 
             print(f"Linking file chunks across processors (number of chunks = {nb_chunks}, ncpu = {ncpu})...")
 
-            # def cbk(linked):
-            #     pass
+            # Does not work for multiprocessing
 
             pool = mp.Pool(processes=ncpu)
             for i in range(nb_chunks):
-                pool.apply_async(self.link_files, args=(file_object_chunks[i], outdir, None, symlink,))
+                pool.apply_async(self.link_files, args=(file_object_chunks[i], outdir, None,
+                                                        symlink, self.scp, prefix_chunks[i]))
             pool.close()
             pool.join()
 
@@ -200,25 +470,38 @@ class PoreMongo:
         return [seq[pos:pos + size] for pos in range(0, len(seq), size)]
 
     @staticmethod
-    def link_files(file_objects, outdir: str, symlink: bool = True, pbar=None):
+    def link_files(file_objects, outdir: str, symlink: bool = False, pbar=None, scp=None, prefixes=None):
 
-        for obj in file_objects:
+        for i, obj in enumerate(file_objects):
 
-            # For results from aggregation (dicts)
-            if isinstance(obj, dict):
-                obj_path = obj["path"]
-                obj_name = obj["name"]
+            if scp is not None:
+
+                if prefixes:
+                    prefix = prefixes[i]
+                else:
+                    prefix = None
+
+                obj.get(scp, out_dir=outdir, prefix=prefix)
+
             else:
-                obj_path = obj.path
-                obj_name = obj.name
+                # For results from aggregation (dicts)
+                if isinstance(obj, dict):
+                    obj_path = obj["path"]
+                    obj_name = obj["name"]
+                else:
+                    obj_path = obj.path
+                    obj_name = obj.name
 
-            if symlink:
-                # If not copy, symlink:
-                target_link = os.path.join(outdir, obj_name)
-                os.symlink(obj_path, target_link)
-            else:
-                # Copy files to target directory
-                shutil.copy(obj_path, outdir)
+                if prefixes:
+                    obj_name = prefixes[i] + "_" + obj_name
+
+                if symlink:
+                    # If not copy, symlink:
+                    target_link = os.path.join(outdir, obj_name)
+                    os.symlink(obj_path, target_link)
+                else:
+                    # Copy files to target directory
+                    shutil.copy(obj_path, outdir)
 
             if pbar:
                 pbar.update(1)
@@ -226,7 +509,7 @@ class PoreMongo:
     # FILE METHODS
     # TODO: Config with paths and tags, comments
     def index(self, index_path: str, recursive: bool = True, scan: bool = True, insert: bool = False, ncpu: int = 1,
-              batch_size: int = 1000):
+              batch_size: int = 1000, reconnect: bool = True):
 
         """ Index all files with extension in unique index_path and assign primary index_id and save in
         corresponding collection_id of DB. Optional recursive search, printing summary and tagging.
@@ -234,9 +517,10 @@ class PoreMongo:
         :param index_path:          str            index_path to index
         :param recursive:           bool           recursive search in directory tree
         :param scan                 bool
-        :param insert
-        :param ncpu
-        :param batch_size
+        :param insert               bool
+        :param ncpu                 int
+        :param batch_size           int
+        :param reconnect            bool
 
         """
 
@@ -246,9 +530,10 @@ class PoreMongo:
         # Can we keep this a generator for really large file collections?
         file_paths = self.files_from_path(path=index_path, extension=".fast5", recursive=recursive)
 
-        self.index_fast5(file_paths=file_paths, scan_file=scan, insert=insert, batch_size=batch_size, ncpu=ncpu)
+        self.index_fast5(file_paths=file_paths, scan_file=scan, insert=insert, batch_size=batch_size,
+                         ncpu=ncpu, reconnect=reconnect)
 
-    def index_fast5(self, file_paths, scan_file=False, insert=False, ncpu=1, batch_size=1000):
+    def index_fast5(self, file_paths, scan_file=False, insert=False, ncpu=1, batch_size=1000, reconnect=True):
 
         """ Index Fast5 files with supported extensions (model schemes for DB) in batches """
 
@@ -259,14 +544,16 @@ class PoreMongo:
 
         if ncpu > 1:
 
-            self.disconnect()
-            print(f"Multiprocessing enabled: {Fore.RED}Disconnected{Style.RESET_ALL} from current MongoClient\n")
+            if self.is_connected():
+                self.disconnect()
 
+            print(f"Multiprocessing enabled: {Fore.RED}Disconnected{Style.RESET_ALL} from current MongoClient\n")
             print(f"Parsing file paths for batching and parallel inserts to PoreMongo...")
 
             chunks = self._chunk_seq(list(file_paths), batch_size)  # in memory
 
-            self.print_ncpu_insert_message(len(chunks), batch_size, ncpu)
+            if self.verbose:
+                self.print_ncpu_insert_message(len(chunks), batch_size, ncpu)
 
             def cbk(inserted):
 
@@ -280,8 +567,11 @@ class PoreMongo:
             pool.close()
             pool.join()
 
-            self.connect(verbose=False)
             print(f"\nMultiprocessing completed: {Fore.GREEN}reconnected{Style.RESET_ALL} PoreMongo with MongoClient")
+            if reconnect:
+                self.connect()
+            else:
+                print(f"You may want to reconnnect Poremongo instance to MongoDB (poremongo.connect).")
 
         else:
             # This is a batch wise insert on a generator:
@@ -298,8 +588,9 @@ class PoreMongo:
                     batch_number += 1
 
             # save last batch
-            self._save_batch(batch, batch_number, total,
-                             model=Fast5, insert=insert)
+            if batch:
+                self._save_batch(batch, batch_number, total,
+                                 model=Fast5, insert=insert)
 
     @staticmethod
     def _get_doc(file_path, scan_file=True, to_mongo=False, model=Fast5):
@@ -331,6 +622,8 @@ class PoreMongo:
         client = pymongo.MongoClient(self.uri)
         collection = client.poremongo.fast5
         collection.insert_many(batch)
+
+        client.close()  # ! Important, will otherwise refuse more connections
 
         return len(batch), i
 
@@ -381,7 +674,7 @@ class PoreMongo:
 
     # Database methods paths for tags and comments
 
-    def tag(self, tags, path_query=None, name_query=None, tag_query=None, remove=False, recursive=True):
+    def tag(self, tags, path_query=None, name_query=None, tag_query=None, remove=False, recursive=True, not_in=False):
 
         """ Add tags to all files with extension tag_path if and only if they are already indexed in the DB.
         Default recursive (for all Fast5 where tag_path in file_path) or optional non-recursive search
@@ -399,20 +692,36 @@ class PoreMongo:
         if isinstance(tags, str):
             tags = (tags,)
 
-        if not self._one_active_param(path_query, name_query, tag_query):
-            raise ValueError("Tags can only be attached by one (str) "
-                             "or multiple (list) attributes of either: path, name or tag")
+        #
+        # if not self._one_active_param(path_query, name_query, tag_query):
+        #     raise ValueError("Tags can only be attached by one (str) "
+        #                      "or multiple (list) attributes of either: path, name or tag")
 
-        objects = self.query(model=Fast5, path_query=path_query, name_query=name_query,
-                             tag_query=tag_query, recursive=recursive)
+        # this cna be memory intensive for 100,000 + documents! (
 
         if self.verbose:
             print("Updating tags: {}".format(tags))
+
+        objects = self.query(model=Fast5, path_query=path_query, name_query=name_query,
+                             tag_query=tag_query, recursive=recursive, not_in=not_in)
 
         if remove:
             objects.update(pull_all__tags=tags)
         else:
             objects.update(add_to_set__tags=tags)
+
+    def _update_by_id_query(self, batch, tags, remove):
+
+        print(f"Updating tags of batch, displaying first three IDs in batch: {batch[:3]}")
+
+        query = {"_id": {"$in": batch}}  # Does a limited batch query by ID
+
+        docs = self.query(raw_query=query)
+
+        if remove:
+            docs.update(pull_all__tags=tags)
+        else:
+            docs.update(add_to_set__tags=tags)
 
     def comment(self, comments, path_query=None, name_query=None, tag_query=None, remove=False, recursive=True):
 
@@ -486,6 +795,8 @@ class PoreMongo:
         i.e. Fast5.query_name(name="test"), Fast5.query_path(path="test_path"), Fast5.query_tags(tags="tag_1").
         """
 
+        # TODO implement nested lists as query objects and nested logic chains?
+
         if raw_query:
             return model.objects(__raw__=raw_query)
 
@@ -502,28 +813,17 @@ class PoreMongo:
 
         # Path filter for selection:
         if path_query:
-            if recursive:
-                if not_in:
-                    path_queries = [Q(__raw__={"path": {'$regex': '^((?!{string}).)*$'.format(string=pq)}})
-                                    for pq in path_query]  # case sensitive regex (not contains)
-                else:
-                    path_queries = [Q(path__contains=pq) for pq in path_query]
-            else:
-                path_queries = [Q(dir__exact=pq) for pq in path_query]
+            path_queries = self.get_path_query(path_query, recursive, not_in)
         else:
             path_queries = list()
 
         if name_query:
-            if not_in:
-                name_queries = [Q(__raw__={"name": {'$regex': '^((?!{string}).)*$'.format(string=nq)}})
-                                for nq in name_query]  # case sensitive regex (not contains)
-            else:
-                name_queries = [Q(name__contains=nq) for nq in name_query]
+            name_queries = self.get_name_query(name_query, not_in)
         else:
             name_queries = list()
 
         if tag_query:
-            tag_queries = [Q(tags=tq) for tq in tag_query]
+            tag_queries = self.get_tag_query(tag_query, not_in)
         else:
             tag_queries = list()
 
@@ -537,6 +837,37 @@ class PoreMongo:
         query = self.chain_logic(queries, query_logic)
 
         return model.objects(query)
+
+    @staticmethod
+    def get_tag_query(tag_query, not_in):
+
+        if not_in:
+            return [] # TODO
+        else:
+            return [Q(tags=tq) for tq in tag_query]
+
+    @staticmethod
+    def get_name_query(name_query, not_in):
+
+        if not_in:
+            return [Q(__raw__={"name": {'$regex': '^((?!{string}).)*$'.format(string=nq)}})
+                               for nq in name_query]  # case sensitive regex (not contains)
+        else:
+            return [Q(name__contains=nq) for nq in name_query]
+
+    # TODO: Abspath - on Windows, UNIX
+
+    @staticmethod
+    def get_path_query(path_query, recursive, not_in):
+
+        if recursive:
+            if not_in:
+                return [Q(__raw__={"path": {'$regex': '^((?!{string}).)*$'.format(string=pq)}})
+                                   for pq in path_query]  # case sensitive regex (not contains)
+            else:
+                return [Q(path__contains=pq) for pq in path_query]
+        else:
+            return [Q(dir__exact=pq) for pq in path_query]
 
     @staticmethod
     def chain_logic(iterable, logic):
@@ -615,10 +946,11 @@ class PoreMongo:
     @staticmethod
     def decompose_uri(uri):
 
-        user_split = uri.replace("mongodb://", "").split("@")
-
-        return "mongodb://" + user_split.pop(0).split(":")[0] + "@" + "@".join(user_split)
-
+        if "localhost" not in uri:
+            user_split = uri.replace("mongodb://", "").split("@")
+            return "mongodb://" + user_split.pop(0).split(":")[0] + "@" + "@".join(user_split)
+        else:
+            return uri
 
 
 
