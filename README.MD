@@ -1,28 +1,40 @@
 # PoreMongo
 
-PoreMongo is a re-imagination of Nick Loman's [`poredb`](https://github.com/nickloman/poredb) for signal-level data management in MongoDB.  At this stage, the module is primarily designed to track `Fast5` files and signal-level read information, without storing the actual signal arrays. Users can tag and comment on file collections for custom data selections, that span sequencing runs, experiments or any other user-defined category. Files can be efficiently selected, sampled and filtered in the database via simplified methods accessible from instances of `PoreMongo`. Computationally expensive operations (indexing or copying files, extracting signal arrays) are therefore decoupled from the data selection process in PoreMongo.
+Please see Jupyter notebooks for documentation.
 
-PoreMongo is under development, stay tuned!
+### Installation
+---
 
-### Usage (Development Version)
-
-Create an instance of `PoreMongo` by passing your MongoDB connection string (URI). You can learn more about the format of the connection string from the [reference manual for MongoDB](https://docs.mongodb.com/manual/reference/connection-string/).
-
-Usually the format is something like this:
-
-```python
-pongo = PoreMongo(uri="mongodb://user_name:secret_password@server_ip:server_port/database_name")
 ```
-You can now inititate the connection via the `MongoClient` API from `PyMongo`:
-
-```python
-pongo.connect()
+pip install poremongo
 ```
 
-The first step is to index your `Fast5` files from a completed sequencing run in their respective directory. This is achieved with the `index` method of `PoreMongo`.
-
-Sequencing runs can generate a large number of files, so the initial indexing will take some time, especially when specifying a recursive walk through the specified directory. This is often necessary due to the `pass/fail` and enumerated sequence run directory structure forced by ONT. You can speed up the process by either indexing the specific directory containing the `Fast5` files or by specifying the number of processors for parallel indexing.
+### Quickstart
+---
 
 ```python
-pongo.disconnect()
+from poremongo import PoreMongo
+
+pm = PoreMongo(uri="mongodb://user:pwd@server:port/database")
+pm.connect()
+
+pm.index("path/to/fast5", batch_size=100, ncpu=1)
+pm.tag(path_query="path/to/fast5", tags=("TB", "R9.4", "RUNID_1726"))
+
+pm.display_tags()
+
+fast5 = pm.query(tag_query="TB")
+
+for f5 in fast5:
+  reads = f5.get_reads(template=True)
+  print(f5.path, f5.tags, reads)
+  
+fast5_sampled = pm.sample(fast5, tags="TB", limit=10, proportion=None)
+
+pm.copy(fast5_sampled, outdir="tmp", ncpu=1)
+
+pm.disconnect()
+
 ```
+
+PoreMongo is under construction.
