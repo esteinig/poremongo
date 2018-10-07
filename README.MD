@@ -21,7 +21,7 @@ pm.connect()
 pm.index("path/to/fast5", batch_size=100, ncpu=1)
 pm.tag(path_query="path/to/fast5", tags=("TB", "R9.4", "RUNID_1726"))
 
-pm.display_tags()
+pm.display("tags")
 
 fast5 = pm.query(tag_query="TB")
 
