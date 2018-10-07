@@ -1,5 +1,14 @@
+"""
+Code adapted from Pomoxis: https://github.com/nanoporetech/pomoxis
+
+This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+(c) 2016 Oxford Nanopore Technologies Ltd.
+
+"""
+
 import asyncio
 import os
+import time
 
 from watchdog.observers import Observer
 from watchdog.events import RegexMatchingEventHandler
@@ -29,6 +38,49 @@ def wait_for_file(fname):
                 break
 
         size = newsize
+
+
+class StandardRegexMatchingEventHandler(RegexMatchingEventHandler):
+    def __init__(self, callback, **kwargs):
+        RegexMatchingEventHandler.__init__(self, **kwargs)
+        self.callback = callback
+
+    def _process_file(self, event):
+        """Process an event when a file is created (or moved).
+        :param event: watchdog event.
+        :returns: result of applying `callback` to watched file.
+        """
+        if event.event_type == EVENT_TYPE_CREATED:
+            fname = event.src_path
+        else:
+            fname = event.dest_path
+        # need to wait for file to be closed
+        wait_for_file(fname)
+        return self.callback(fname)
+
+    def dispatch(self, event):
+        """Dispatch an event after filtering. We handle
+        creation and move events only.
+
+        :param event: watchdog event.
+        :returns: None
+        """
+        if event.event_type not in (EVENT_TYPE_CREATED, EVENT_TYPE_MOVED):
+            return
+        if self.ignore_directories and event.is_directory:
+            return
+
+        paths = []
+        if has_attribute(event, 'dest_path'):
+            paths.append(unicode_paths.decode(event.dest_path))
+        if event.src_path:
+            paths.append(unicode_paths.decode(event.src_path))
+
+        if any(r.match(p) for r in self.ignore_regexes for p in paths):
+            return
+
+        if any(r.match(p) for r in self.regexes for p in paths):
+            self._process_file(event)
 
 
 class AIORegexMatchingEventHandler(RegexMatchingEventHandler):
@@ -101,17 +153,31 @@ class Watcher(object):
         self.observer.join()
 
 
-def watch_path(path, callback, recursive=False, regexes=['.*\.fast5$'], sleep=False):
+def watch_path(path, callback, recursive=False, regexes=['.*\.fast5$'], async=False, sleep=True):
     """Watch a filepath indefinitely for new files, applying callback to files.
     :param path: path to watch.
     :param callback: callback to apply to newly found files.
     :param recursive: recursively watch path?
     :param regexes: filter files by applying regex.
-    :param sleep: enter infinite loop, close with KeyboardInterrupt
+    :param async: use asyncio regex event handler.
+    :param sleep: enter infinite loop to keep thread alive.
     """
-    handler = AIORegexMatchingEventHandler(callback=callback, regexes=regexes)
+
+    if async:
+        handler = AIORegexMatchingEventHandler(callback=callback, regexes=regexes)
+    else:
+        handler = StandardRegexMatchingEventHandler(callback=callback, regexes=regexes)
+
     watch = Watcher(path, event_handler=handler, recursive=recursive)
     print('Starting to watch {} for new files matching {}.'.format(path, regexes))
     watch.start()
+
+    if sleep:
+        try:
+            # Simulate application activity (which keeps the main thread alive).
+            while True:
+                time.sleep(2)
+        except (KeyboardInterrupt, SystemExit):
+            watch.stop()
 
     return watch

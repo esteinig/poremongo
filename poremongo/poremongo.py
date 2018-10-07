@@ -64,13 +64,15 @@ class PoreMongo:
                 try:
                     self.uri = config_dict["uri"]
                 except KeyError:
-                    raise KeyError("Configuration dictionary must contain key 'uri' to make the connection to MongoDB.")
+                    raise KeyError("Configuration dictionary must contain key 'uri'"
+                                   " to make the connection to MongoDB.")
         elif isinstance(config, dict):
             try:
                 self.uri = config["uri"]
                 self.config = config
             except KeyError:
-                raise KeyError("Configuration dictionary must contain key 'uri' to make the connection to MongoDB.")
+                raise KeyError("Configuration dictionary must contain key 'uri'"
+                               " to make the connection to MongoDB.")
         else:
             raise ValueError("Config must be string path to JSON file or dictionary.")
 
@@ -81,7 +83,8 @@ class PoreMongo:
     def connect(self, ssh=False, verbose=True, is_mock=False, **kwargs):
 
         try:
-            self.client = connect(host=self.uri, is_mock=is_mock, serverSelectionTimeoutMS=10000, **kwargs)
+            self.client = connect(host=self.uri, serverSelectionTimeoutMS=10000,
+                                  is_mock=is_mock, **kwargs)
             self.client.server_info()
         except ServerSelectionTimeoutError as timeout_error:
             self.client = None
@@ -97,7 +100,6 @@ class PoreMongo:
         self.fast5 = self.db.fast5
 
         # SSH
-
         if ssh:
             self.open_ssh()
             self.open_scp()
@@ -150,40 +152,28 @@ class PoreMongo:
     #     DB Summaries       #
     ##########################
 
-    def display(self):
+    def display(self, cat):
 
-        """
-        Complete database summary displays general information on Fast5 documents contained in DB.
+        if cat in ("tags", "tag"):
+            pipe = [
+                {"$match": {"tags": {"$not": {"$size": 0}}}},
+                {"$unwind": "$tags"},
+                {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
+                {"$match": {"count": {"$gte": 1}}},
+                {"$sort": {"count": -1}},
+                {"$limit": 100}
+            ]
+            result = list(Fast5.objects.aggregate(*pipe))
+            msg = self._get_display_tag_msg(result)
+            print(msg)
 
-            - total number of documents in DB
-            - total number of unique tags in DB
-            - total number valid / invalid scans
-            - total number that have reads
-            - total number that are 1D / 2D
-
-        """
+        elif cat in ("db", "database"):
+            pass
+        else:
+            raise ValueError("Provide valid display category.")
 
     @staticmethod
-    def display_tags():
-
-        """
-        Tag summary for collections:
-
-            - list of tags with total number of files, valid/invalid, reads, 1D / 2D
-            - avergae signal length in tag, think about summary statistics on the
-
-        """
-
-        pipe = [
-            {"$match": {"tags": {"$not": {"$size": 0}}}},
-            {"$unwind": "$tags"},
-            {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
-            {"$match": {"count": {"$gte": 1}}},
-            {"$sort": {"count": -1}},
-            {"$limit": 100}
-        ]
-
-        result = list(Fast5.objects.aggregate(*pipe))
+    def _get_display_tag_msg(result):
 
         msg = f"Documents per tag in current PoreMongo DB:\n\n"
         msg += f"{Fore.CYAN}{'Tag':<10}{'Count':>10}{Style.RESET_ALL}\n"
@@ -192,7 +182,8 @@ class PoreMongo:
             msg += f"{Fore.YELLOW}{r['_id']:<10}{Style.RESET_ALL}={Fore.GREEN}{r['count']:>10}{Style.RESET_ALL}\n"
         msg += "\n=====================\n"
 
-        print(msg)
+        return msg
+
 
     #########################
     #   Cleaning DB + QC    #
@@ -206,7 +197,7 @@ class PoreMongo:
 
     # SELECTION AND MAPPING METHODS
 
-    def watch(self, path, callback=None, index=True, recursive=False):
+    def watch(self, path, callback=None, index=True, recursive=False, async=False, sleep=True):
         """Pomoxis async watchdog to watch path for .fast5
         files, apply callback function to filepath on event detection.
 
@@ -214,6 +205,8 @@ class PoreMongo:
         :param callback:
         :param index:
         :param recursive:
+        :param async:
+        :param sleep:
         :return:
         """
 
@@ -222,11 +215,11 @@ class PoreMongo:
                   "same path will be updated. If path is not in database, a new "
                   "model is inserted.")
             print(self.fast5)
-            return watch_path(path, self.upsert_callback, recursive=recursive)
+            return watch_path(path, self.upsert_callback, recursive=recursive, async=async, sleep=sleep)
         else:
             if callback is None:
                 raise ValueError("Must provide callback function for watchdog callback.")
-            return watch_path(path, callback, recursive=recursive)
+            return watch_path(path, callback, recursive=recursive, async=async, sleep=sleep)
 
     # TODO
     def upsert_callback(self, fpath):
@@ -239,11 +232,11 @@ class PoreMongo:
         fast5 = self._get_doc(fpath, scan_file=True)
         print(f"Fast5: {time.time()} name={str(fast5.name)}")
 
-    def schedule_run(self, fast5, outdir="run_sim_1", sort=True, scale=1.0, timeout=None):
+    def schedule_run(self, fast5, outdir="run_sim_1", scale=1.0, timeout=None):
         """Schedule a run extracted from sorted completion times
-        for reads contained in Fast5 models. Scale aduststs the
+        for reads contained in Fast5 models. Scale adjusts the
         time intervals between reads. Use with group_runs to
-        extract reads from the same runs.
+        extract reads from the same sequencing run.
 
         :param fast5:
         :param sort:
@@ -252,32 +245,28 @@ class PoreMongo:
         :param timeout:
         :return:
         """
-        # Compute difference between completion of reads
-
+        # WIll double copy of Fast5 for 2d reads as of now TODO
         reads = [(read, f5) for f5 in fast5 for read in f5.reads]
-
-        if sort:
-            reads = sorted(reads, key=lambda x: x[0].end_time, reverse=False)
+        # Sort by ascending read completeion times first
+        reads = sorted(reads, key=lambda x: x[0].end_time, reverse=False)
 
         read_end_times = [read[0].end_time for read in reads]
-
+        # Compute difference between completion of reads
         time_delta = [0] + [delta/scale for delta in self._delta(read_end_times)]
 
         scheduler = BackgroundScheduler()
-
         start = time.time()  # For callback
         run = datetime.now()  # For scheduler
         for i, delay in enumerate(time_delta):
             run += timedelta(seconds=delay)
-            scheduler.add_job(self.copy_read, 'date', run_date=run, kwargs={'read': reads[i][0], 'start': start,
-                                                                            'fast5': reads[i][1], 'outdir': outdir})
-
+            scheduler.add_job(self.copy_read, 'date', run_date=run,
+                              kwargs={'read': reads[i][0], 'start': start,
+                                      'fast5': reads[i][1], 'outdir': outdir})
         scheduler.start()
-        print(f"Press Ctrl+{'Break' if os.name == 'nt' else 'C'} to exit")
-
         if not timeout:
+            print(f"Press Ctrl+{'Break' if os.name == 'nt' else 'C'} to exit")
             try:
-                # This is here to simulate application activity (which keeps the main thread alive).
+                # Simulate application activity (which keeps the main thread alive).
                 while True:
                     time.sleep(2)
             except (KeyboardInterrupt, SystemExit):
@@ -313,7 +302,6 @@ class PoreMongo:
 
         pipeline = [{"$group": {"_id": "$exp_start_time",
                                 "fast5": {"$push": "$_id"}}}]
-
         run_groups = list(fast5.aggregate(*pipeline, allowDiskUse=True))
 
         runs = {}
@@ -322,7 +310,6 @@ class PoreMongo:
             entry = {"run": datetime.fromtimestamp(timestamp),
                      "fast5": run["fast5"]}
             runs[timestamp] = entry
-
         print(f"Extracted {len(runs)} {'run' if len(runs) == 1 else 'runs'}.")
 
         return runs
@@ -674,7 +661,8 @@ class PoreMongo:
 
     # Database methods paths for tags and comments
 
-    def tag(self, tags, path_query=None, name_query=None, tag_query=None, remove=False, recursive=True, not_in=False):
+    def tag(self, tags, path_query=None, name_query=None, tag_query=None, raw_query=None,
+            remove=False, recursive=True, not_in=False):
 
         """ Add tags to all files with extension tag_path if and only if they are already indexed in the DB.
         Default recursive (for all Fast5 where tag_path in file_path) or optional non-recursive search
@@ -702,7 +690,7 @@ class PoreMongo:
         if self.verbose:
             print("Updating tags: {}".format(tags))
 
-        objects = self.query(model=Fast5, path_query=path_query, name_query=name_query,
+        objects = self.query(model=Fast5, raw_query=raw_query, path_query=path_query, name_query=name_query,
                              tag_query=tag_query, recursive=recursive, not_in=not_in)
 
         if remove:

@@ -9,7 +9,7 @@ setup(
     packages=find_packages(),
     install_requires=['numpy', 'tqdm', 'colorama', 'pymongo', 'mongoengine', 'ont_fast5_api',
                       'pandas', 'paramiko', 'scp', 'scikit-image', 'scipy', 'watchdog', 'apscheduler'],
-    version='0.2',
+    version='0.3',
     license='MIT',
-    description='Nanopore sequence read data and raw signal data management with MongoDB'
+    description='Nanopore sequence read and raw signal data management with MongoDB'
 )

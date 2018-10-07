@@ -120,7 +120,7 @@ class Fast5(Document):
                         range=channel_info['range'],
                         offset=channel_info['offset'])
 
-            # Add compute of timestamp when read finishes compared t
+            # Add compute of timestamp when read completed, function accesses read attributes
             read.end_time = self.calculate_timestamp(read, exp_start_time, sampling_rate)
 
             if update:
