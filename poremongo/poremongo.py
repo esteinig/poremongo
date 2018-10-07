@@ -238,6 +238,8 @@ class PoreMongo:
         time intervals between reads. Use with group_runs to
         extract reads from the same sequencing run.
 
+        Based on taeper - Michael Hall - https://github.com/mhall88/taeper
+
         :param fast5:
         :param sort:
         :param scale:
