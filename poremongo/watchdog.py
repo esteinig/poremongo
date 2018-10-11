@@ -3,7 +3,6 @@ Code adapted from Pomoxis: https://github.com/nanoporetech/pomoxis
 
 This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 (c) 2016 Oxford Nanopore Technologies Ltd.
-
 """
 
 import asyncio
@@ -25,8 +24,6 @@ EVENT_TYPE_MODIFIED = 'modified'
 
 def wait_for_file(fname):
     """Block until a filesize remains constant."""
-    # watchdog cannot tell us when a newly created file has finished being
-    #    written. Let's just wait until the filesize stops changing
     size = None
     while True:
         try:
@@ -153,7 +150,7 @@ class Watcher(object):
         self.observer.join()
 
 
-def watch_path(path, callback, recursive=False, regexes=['.*\.fast5$'], async=False, sleep=True):
+def watch_path(path, callback, recursive=False, regexes=['.*\.fast5$'], async=False, keep_active=True):
     """Watch a filepath indefinitely for new files, applying callback to files.
     :param path: path to watch.
     :param callback: callback to apply to newly found files.
@@ -169,10 +166,13 @@ def watch_path(path, callback, recursive=False, regexes=['.*\.fast5$'], async=Fa
         handler = StandardRegexMatchingEventHandler(callback=callback, regexes=regexes)
 
     watch = Watcher(path, event_handler=handler, recursive=recursive)
+
     print('Starting to watch {} for new files matching {}.'.format(path, regexes))
     watch.start()
 
-    if sleep:
+    # I am not sure how the async event handler works in this case. It is running, but
+    # has to be stopped manually. Async does not work with keeping the thread alive.
+    if keep_active:
         try:
             # Simulate application activity (which keeps the main thread alive).
             while True:
