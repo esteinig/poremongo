@@ -10,3 +10,4 @@ scipy
 scikit-image
 watchdog
 apscheduler
+ont_fast5_api
