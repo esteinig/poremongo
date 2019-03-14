@@ -58,15 +58,15 @@ class Fast5(Document):
     # Meta
     meta = {"collection": "fast5"}
 
-    copy = False
+    is_copy = False
 
     # Single query API for Fast5
 
     def get(self, scp_client, out_dir=".", temp_dir=None, prefix=None):
 
-        """ Change the path attribute of the instance to copy the file as
-        temporary file from remote host via SSH.
-
+        """ Change the path attribute of the instance
+        to copy the file as temporary file from remote
+        host via SSH.
         """
 
         if out_dir:
@@ -74,7 +74,7 @@ class Fast5(Document):
         else:
             tmp_dir = os.path.abspath(temp_dir)
 
-        tmp_fast5 = os.path.join(tmp_dir, self.name)
+        tmp_fast5 = os.path.join(tmp_dir, str(self.name))
 
         scp_client.get(self.path, local_path=tmp_dir)
 
@@ -82,14 +82,14 @@ class Fast5(Document):
             os.rename(tmp_fast5, os.path.join(tmp_dir, prefix+"_"+self.name))
 
         self.path = tmp_fast5
-        self.copy = True
+        self.is_copy = True
 
     def remove(self):
 
         """ Remove a temporary local copy of the Fast5 file """
 
         try:
-            if self.copy:
+            if self.is_copy:
                 os.remove(self.path)
             else:
                 raise ValueError("Model path must have been modified by self.get - otherwise this risks"
@@ -98,14 +98,32 @@ class Fast5(Document):
             pass
 
     def scan_file(self, update=True):
-
-        """ Scans a Fast5 file and provides several pieces of data: info on reads (Read model) and
-        tags on pass / fail if present in file path of Fast5. """
+        """ Scans Fast5 files for data to exract into model"""
 
         info = Fast5Info(self.path)
         fast5 = Fast5File(self.path)
 
         exp_start_time, sampling_rate = self._get_time_and_sampling_rate(fast5)
+        reads = self._create_reads(info=info, fast5=fast5, sampling_rate=sampling_rate,
+                                   exp_start_time=exp_start_time, update=update)
+
+        if not update:
+            self.reads = reads
+
+        if update:
+            self.update(set__has_reads=True, set__valid=info.valid, set__version=info.version,
+                        set__read_number=len(info.read_info), set__sampling_rate=sampling_rate,
+                        set__exp_start_time=exp_start_time)
+        else:
+            self.has_reads = True
+            self.valid = info.valid
+            self.version = info.version
+            self.read_number = len(info.read_info)
+            self.sampling_rate = sampling_rate
+            self.exp_start_time = exp_start_time
+
+    def _create_reads(self, info: Fast5Info, fast5: Fast5File, sampling_rate: float,
+                      exp_start_time: float, update: bool=False) -> list:
 
         reads = []
         for attr in info.read_info:
@@ -116,37 +134,20 @@ class Fast5(Document):
                         duration=int(attr.duration),
                         channel=int(info.channel),
                         start_time=int(attr.start_time),
+                        end_time=self.calculate_timestamp(int(attr.start_time), int(attr.duration),
+                                                          exp_start_time, sampling_rate),
                         digi=channel_info['digitisation'],
                         range=channel_info['range'],
                         offset=channel_info['offset'])
-
-            # Add compute of timestamp when read finishes compared t
-            read.end_time = self.calculate_timestamp(read, exp_start_time, sampling_rate)
 
             if update:
                 self.update(add_to_set__reads=read)
             else:
                 reads.append(read)
 
-        if not update:
-            self.reads = reads
+        return reads
 
-        if update:
-            self.update(set__has_reads=True,
-                        set__valid=info.valid,
-                        set__version=info.version,
-                        set__read_number=len(info.read_info),
-                        set__sampling_rate=sampling_rate,
-                        set__exp_start_time=exp_start_time)
-        else:
-            self.has_reads = True
-            self.valid = info.valid
-            self.version = info.version
-            self.read_number = len(info.read_info)
-            self.sampling_rate = sampling_rate
-            self.exp_start_time = exp_start_time
-
-    def _get_time_and_sampling_rate(self, fast5):
+    def _get_time_and_sampling_rate(self, fast5) -> (float, float):
 
         exp_start_time = fast5.get_tracking_id().get('exp_start_time')
 
@@ -164,11 +165,12 @@ class Fast5(Document):
 
         return exp_start_time, sampling_rate
 
-    def get_reads(self, window_size: int=None, window_step: int=None, scale: bool=False, template: bool=True,
-                  return_all=True):
+    def get_reads(self, window_size: int=None, window_step: int=None,
+                  scale: bool=False, template: bool=True, return_all=True) -> np.array:
 
-        """ Scaled pA values (float32) or raw DAC values (int16), return first read (1D) or
-        if all_reads = True return array of all signal arrays (e.g. if using 2D kits) """
+        """ Scaled pA values (float32) or raw DAQ values (int16),
+        return first read (1D) or if all_reads = True return
+        array of all reads """
 
         if template:
             reads = np.array([Fast5File(self.path).get_raw_data(scale=scale)])
@@ -198,16 +200,19 @@ class Fast5(Document):
         return (time_as_date - epoch).total_seconds()
 
     @staticmethod
-    def calculate_timestamp(read, exp_start_time, sampling_rate) -> float:
+    def calculate_timestamp(read_start_time, read_duration, exp_start_time, sampling_rate) -> float:
         """Calculates the epoch time when the read finished sequencing.
-        :param read: full path to fast5 file
+        :param read_start_time:
+        :param read_duration:
+        :param exp_start_time:
+        :param sampling_rate:
         :returns Epoch time that the read finished sequencing
         """
         if exp_start_time is None:  # missing field(s) in fast5 file
             return 0.0
         experiment_start = exp_start_time
         # adjust for the sampling rate of the channel
-        sample_length = read.start_time + read.duration
+        sample_length = read_start_time + read_duration
         finish = sample_length / sampling_rate
 
         return experiment_start + finish
