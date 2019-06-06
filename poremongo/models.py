@@ -9,6 +9,23 @@ from ont_fast5_api.fast5_file import Fast5File
 
 from datetime import datetime
 
+# TODO: Paramiko Timeout
+
+
+class Sequence(EmbeddedDocument):
+
+    id = StringField(required=True)
+
+    basecaller = StringField(required=True)
+    version = StringField(required=True)
+
+    path = StringField(unique=False)
+    name = StringField(unique=False)
+    dir = StringField(unique=False)
+
+    quality = FloatField()
+    length = IntField()
+
 
 class Read(EmbeddedDocument):
 
@@ -25,6 +42,8 @@ class Read(EmbeddedDocument):
 
     end_time = FloatField()
 
+    sequences = EmbeddedDocumentListField(Sequence)
+
     def statistics(self):
 
         pass
@@ -35,7 +54,8 @@ class Fast5(Document):
     _id = ObjectIdField()
 
     # File Info
-    path = StringField(unique=True, required=True)
+    # Change unique here to induce break in insertion of the same files
+    path = StringField(required=True, unique=False)
     name = StringField(required=True)
     dir = StringField(required=False)
 
@@ -48,6 +68,8 @@ class Fast5(Document):
     read_number = IntField(required=False)
     sampling_rate = FloatField(required=False)
     exp_start_time = FloatField(required=False)
+
+    # TODO: run_id (to separate runs)
 
     reads = EmbeddedDocumentListField(Read, required=False)
 

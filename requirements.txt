@@ -10,3 +10,4 @@ scipy
 scikit-image
 watchdog
 apscheduler
+click

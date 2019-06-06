@@ -133,9 +133,9 @@ class AIORegexMatchingEventHandler(RegexMatchingEventHandler):
 class Watcher(object):
     def __init__(self, path, event_handler, recursive=False):
         """Wrapper around common watchdog idiom.
-        :param path: path to watch for new files.
+        :param path: path to index for new files.
         :param event_handler: subclass of watchdog.events.FileSystemEventHandler.
-        :param recursive: watch path recursively?
+        :param recursive: index path recursively?
         """
         self.observer = Observer()
         self.observer.schedule(event_handler, path, recursive)
@@ -152,9 +152,9 @@ class Watcher(object):
 
 def watch_path(path, callback, recursive=False, regexes=['.*\.fast5$'], async=False, keep_active=True):
     """Watch a filepath indefinitely for new files, applying callback to files.
-    :param path: path to watch.
+    :param path: path to index.
     :param callback: callback to apply to newly found files.
-    :param recursive: recursively watch path?
+    :param recursive: recursively index path?
     :param regexes: filter files by applying regex.
     :param async: use asyncio regex event handler.
     :param sleep: enter infinite loop to keep thread alive.
@@ -167,7 +167,7 @@ def watch_path(path, callback, recursive=False, regexes=['.*\.fast5$'], async=Fa
 
     watch = Watcher(path, event_handler=handler, recursive=recursive)
 
-    print('Starting to watch {} for new files matching {}.'.format(path, regexes))
+    print('Starting to index {} for new files matching {}.'.format(path, regexes))
     watch.start()
 
     # I am not sure how the async event handler works in this case. It is running, but

@@ -1,42 +1,65 @@
 """ Minimal extension of PoreDB by Nick Loman et al. for Fast5 management in MongoDB """
 
 import os
+import time
+import math
 import tqdm
 import json
 import random
 import shutil
 import pymongo
 import pandas
+import logging
 import paramiko
-import time
+
 import multiprocessing as mp
 
-from datetime import datetime, timedelta
 from scp import SCPClient
-
+from pathlib import Path
 from textwrap import dedent
 from functools import reduce
 from operator import or_, and_
 from colorama import Fore, Style
+from datetime import datetime, timedelta
 
 from mongoengine import connect
 from mongoengine.queryset.visitor import Q
-from mongoengine.errors import NotUniqueError
 from pymongo.errors import ServerSelectionTimeoutError
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from poremongo.watchdog import watch_path
-from poremongo.models import Fast5
+from poremongo.models import Fast5, Read, Sequence
+from poremongo.utils import _get_doc, _insert_doc
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(name)-12s] \t %(message)s",
+    datefmt='%H:%M:%S'
+)
 
 
 class PoreMongo:
 
-    """ API for PoreMongo DB: includes main models: minimal, standard, signal, sequence (increasing size of DB) """
+    """ API for PoreMongo """
 
-    def __init__(self, config=None, uri=None, connect=False, ssh=False, mock=False, verbose=False):
+    def __init__(
+        self,
+        uri: str = None,
+        config: Path or dict = None,
+        connect: bool = False,
+        ssh: bool = False,
+        mock: bool = False
+    ):
+        disallowed = ['local']
+        if Path(uri).stem in disallowed:
+            raise ValueError(f"Database can not be named: "
+                             f"{', '.join(disallowed)}")
 
         self.uri = uri
+        self.verbose = True
+
+        self.logger = logging.getLogger(__name__)
 
         if config:
             self._parse_config(config)
@@ -46,73 +69,110 @@ class PoreMongo:
         self.ssh = None
         self.scp = None
 
-        self.verbose = verbose
-
-        self.client = None
-        self.db = None
-        self.fast5 = None
+        self.client: pymongo.MongoClient = pymongo.MongoClient(None)
+        self.db = None  # Client DB
+        self.fast5 = None  # Fast5 collection
 
         if connect:
             self.connect(ssh=ssh, is_mock=mock)
 
-    def _parse_config(self, config):
+    def _parse_config(self, config: Path or dict):
 
-        if isinstance(config, str):
-            with open(config, "r") as config_file:
-                config_dict = json.load(config_file)
+        if isinstance(config, Path):
+            with config.open('r') as cfg:
+                config_dict = json.load(cfg)
                 self.config = config_dict
                 try:
                     self.uri = config_dict["uri"]
                 except KeyError:
-                    raise KeyError("Configuration dictionary must contain key 'uri'"
-                                   " to make the connection to MongoDB.")
+                    raise KeyError(
+                        "Configuration dictionary must contain key 'uri' "
+                        "to make the connection to MongoDB."
+                    )
         elif isinstance(config, dict):
             try:
                 self.uri = config["uri"]
                 self.config = config
             except KeyError:
-                raise KeyError("Configuration dictionary must contain key 'uri'"
-                               " to make the connection to MongoDB.")
+                raise KeyError(
+                    "Configuration dictionary must contain key 'uri' "
+                    "to make the connection to MongoDB."
+                )
         else:
-            raise ValueError("Config must be string path to JSON file or dictionary.")
+            raise ValueError(
+                "Config must be string path to JSON file or dictionary."
+            )
 
     def is_connected(self):
 
         return True if self.client else False
 
-    def connect(self, ssh=False, verbose=True, is_mock=False, **kwargs):
+    def connect(self, ssh: bool = False, is_mock: bool = False, **kwargs):
+
+        self.logger.debug(
+            f'Attempting to connect to: {self.decompose_uri()}'
+        )
 
         try:
-            self.client = connect(host=self.uri, serverSelectionTimeoutMS=10000,
-                                  is_mock=is_mock, **kwargs)
-            self.client.server_info()
-        except ServerSelectionTimeoutError as timeout_error:
-            self.client = None
-            print(timeout_error)
+            self.client = connect(
+                host=self.uri,
+                serverSelectionTimeoutMS=10000,
+                is_mock=is_mock,
+                **kwargs
+            )
+        except ServerSelectionTimeoutError:
+            raise
 
-        if verbose:
-            self.print_connected_message()
+        self.logger.info(
+            f'Success! Connected to: {self.decompose_uri()}'
+        )
 
-        # Database: poremongo
-        self.db = self.client.db
+        self.db = self.client.db    # Database connected
+        self.fast5 = self.db.fast5  # Fast5 collection
 
-        # Collection: fast5
-        self.fast5 = self.db.fast5
+        self.logger.info(
+            'Default collection for PoreMongo is >> fast5 <<'
+        )
 
-        # SSH
         if ssh:
+            self.logger.debug(
+                'Attempting to open SSH and SCP'
+            )
             self.open_ssh()
             self.open_scp()
+            self.logger.info(
+                'Success! Opened SSH and SCP to PoreMongo'
+            )
 
-    def disconnect(self):
+    def disconnect(self, ssh=False):
+
+        self.logger.debug(
+            f'Attempting to disconnect from: {self.decompose_uri()}'
+        )
 
         self.client.close()
 
         self.client, self.db, self.fast5 = None, None, None
 
+        self.logger.info(
+            f'Disconnected from: {self.decompose_uri()}'
+        )
+
+        if ssh:
+            self.logger.info(
+                'Attempting to close SSH and SCP'
+            )
+            self.close_ssh()
+            self.close_scp()
+            self.logger.info(
+                'Closed SSH and SCP'
+            )
+
     def open_scp(self):
 
-        self.scp = SCPClient(self.ssh.get_transport())
+        self.scp = SCPClient(
+            self.ssh.get_transport()
+        )
 
         return self.scp
 
@@ -124,6 +184,7 @@ class PoreMongo:
 
         self.ssh.close()
 
+    # TODO: Exceptions for SSH configuration file
     def open_ssh(self, config_file=None):
 
         if config_file:
@@ -133,8 +194,12 @@ class PoreMongo:
         else:
             ssh_config = self.config["ssh"]
 
-        self.ssh = self.create_ssh_client(server=ssh_config["server"], port=ssh_config["port"],
-                                          user=ssh_config["user"], password=ssh_config["password"])
+        self.ssh = self.create_ssh_client(
+            server=ssh_config["server"],
+            port=ssh_config["port"],
+            user=ssh_config["user"],
+            password=ssh_config["password"]
+        )
 
         return self.ssh
 
@@ -147,6 +212,219 @@ class PoreMongo:
         client.connect(server, port, user, password)
 
         return client
+
+    ##########################
+    #     Fast5 Indexing     #
+    ##########################
+
+    # TODO: Config with paths and tags, comments
+    def index(
+        self,
+        index_path: Path,
+        recursive: bool = True,
+        scan: bool = True,
+        ncpu: int = 2,
+        batch_size: int = 1000,
+    ):
+
+        """ Main access method to index Fast5 files into MongoDB
+
+        :param index_path
+            Path to to search for Fast5 files
+
+        :param recursive
+            Search for Fast5 recursively
+
+        :param scan
+            Scan and extract database model from Fast5,
+            otherwise simply index model with file path only
+
+        :param ncpu
+            Number of processors to use, recommended for any
+            reasonably large Fast5 collection. Default is to
+            use multiprocessing inserts (ncpu = 2)
+
+            Warning! Documents are inserted with a unique identifier
+            field. As the batch insertion does not check whether a
+            file path is already in the database, you can therefore
+            insert the same documents multiple times
+
+        :param batch_size
+            Number of documents to insert in one process.
+
+
+        """
+
+        self.logger.info(
+            f'Initiate indexing of files (.fast5) in: {index_path}'
+        )
+
+        self.logger.info(
+            f'Collecting files, this may take some time...'
+        )
+
+        file_paths = self.files_from_path(
+            path=str(index_path),
+            extension=".fast5",
+            recursive=recursive
+        )   # Returns generator!
+
+        file_paths = list(file_paths)  # Load the list into memory for chunking
+
+        self.logger.info(
+            f'Collected {len(file_paths)} Fast5 files from: {index_path}'
+        )
+
+        self._index_fast5(
+            file_paths=file_paths,
+            scan_file=scan,
+            batch_size=batch_size,
+            ncpu=ncpu
+        )
+
+    def _index_fast5(
+        self,
+        file_paths: list,
+        scan_file: bool = True,
+        ncpu: int = 1,
+        batch_size: int = 1000
+    ):
+
+        total = 0
+        batch_number = 0
+
+        if ncpu > 1:
+
+            self.logger.info(
+                f'Parallel inserts enabled, processors: {ncpu}'
+            )
+
+            # Disconnect to initiate parallel connections
+            if self.is_connected():
+
+                self.disconnect()
+                self.logger.info(
+                    'Disconnected from database to initiate '
+                    'parallel database connections'
+                )
+
+            self.logger.info(
+                f'Chunking files into batches of size {batch_size}'
+            )
+            chunks = self._chunk_seq(
+                file_paths, batch_size
+            )  # in memory
+
+            logger = self.logger # Local instance for callback
+
+            def cbk(x):
+                logger.info(x)
+
+            pool = mp.Pool()
+            for i, batch in enumerate(chunks):
+                pool.apply_async(
+                    _insert_doc,
+                    args=(batch, self.uri, i, scan_file, ),
+                    callback=cbk
+                )   # Only static methods work, out-sourced functions to utils
+            pool.close()
+            pool.join()
+
+            self.logger.info(
+                f'Inserted {len(file_paths)} Fast5 files into database'
+            )
+            self.logger.info(
+                f'Reconnecting to database on single connection.'
+            )
+            self.connect()
+
+        else:
+            # This is a batch wise insert on a generator:
+            batch = []
+            for file_path in file_paths:
+                m = _get_doc(
+                    file_path,
+                    scan_file=scan_file,
+                    to_mongo=False,
+                    model=Fast5
+                )
+                batch.append(m)
+
+                # At each batch size save batch to collection and clear batch
+                if len(batch) == batch_size:
+                    total = self._save_batch(
+                        batch, batch_number, total, model=Fast5
+                    )
+                    batch = []
+                    batch_number += 1
+
+            # Save last batch
+            if batch:
+                self._save_batch(
+                    batch, batch_number, total, model=Fast5,
+                )
+
+    def _save_batch(
+        self,
+        batch,
+        batch_number,
+        total,
+        model=Fast5
+    ):
+
+        model.objects.insert(batch)
+        total += len(batch)
+
+        self.logger.info(
+            f'Inserted {len(batch)} documents '
+            f'(batch: {batch_number}, total: {total})'
+        )
+
+        return total
+
+    ##########################
+    #     Poremongo Tags     #
+    ##########################
+
+    def tag(self, tags, path_query=None, name_query=None, tag_query=None,
+            raw_query=None, remove=False, recursive=True, not_in=False):
+
+        """
+        Add tags to all files with extension tag_path
+        if and only if they are already indexed in the DB.
+
+        Default recursive (for all Fast5 where tag_path in file_path)
+        or optional non-recursive search
+        (for all Fast5 where tag_path is parent_path) and printing summary.
+
+        :param tags:
+        :param path_query:
+        :param name_query:
+        :param tag_query:
+        :param remove:
+        :param recursive:
+        :return:
+        """
+
+        if isinstance(tags, str):
+            tags = (tags,)
+
+        self.logger.info(f'Updating tags to: {", ".join(tags)}')
+
+        objects = self.query(
+            model=Fast5,
+            raw_query=raw_query,
+            path_query=path_query,
+            name_query=name_query,
+            tag_query=tag_query,
+            recursive=recursive,
+            not_in=not_in)
+
+        if remove:
+            objects.update(pull_all__tags=tags)
+        else:
+            objects.update(add_to_set__tags=tags)
+
 
     ##########################
     #     DB Summaries       #
@@ -185,6 +463,7 @@ class PoreMongo:
         return msg
 
 
+
     #########################
     #   Cleaning DB + QC    #
     #########################
@@ -193,12 +472,67 @@ class PoreMongo:
     #   Fast5: Index + Tags  #
     ##########################
 
-    # Connect with SSH to rsync files over to local
+    # Basecall, associate sequence label, pipelines for tasks
+
+    def link_fastq(self, fastq):
+
+        from pyfastaq import sequences
+
+        fq_reader = sequences.file_reader(fastq)
+
+        fq_stats = {}
+        i = 0
+        for seq in fq_reader:
+            qual = self.average_quality([ord(x) - 33 for x in seq.qual])
+            seq_info = seq.id.split(" ")
+
+            fq_stats[seq_info[0]] = {'length': len(seq), 'quality': qual}
+            i += 1
+            if i == 5:
+                break
+
+        print(fq_stats.keys())
+
+        # Return only the Fast5 objects where the nested reads have the parsed IDs
+        fast5 = Fast5.objects(__raw__={'reads.id': {'$in': list(fq_stats.keys())}})
+
+        fq = Path(fastq)
+        fq_path, fq_dir, fq_name = fq.absolute(), fq.parent.absolute(), fq.name
+
+        for f5 in fast5:
+            if len(f5.reads) > 1:
+                print(f"Detected unsupported complementary strand, skipping Fast5: {fast5.name}.")
+                continue
+
+            for read in f5.reads:  # TODO: Support for complementary strand at some stage.
+                seq = Sequence(id=None, basecaller="albacore", version="2.1", path=fq_path, dir=fq_dir, name=fq_name,
+                               quality=fq_stats[read.id]["quality"], length=fq_stats[read.id]["length"])
+
+                read.sequences.append(seq)  # Could have multiple basecalled sequences
+                print(read.sequences)
+
+    def basecall(self, fast5, outdir="basecalls", ncpu=16):
+
+        pass
+
+    @staticmethod
+    def average_quality(quals):
+
+        """
+        Receive the integer quality scores of a read and return the average quality for that read
+        First convert Phred scores to probabilities, calculate average error probability and
+        convert average back to Phred scale.
+
+        https://gigabaseorgigabyte.wordpress.com/2017/06/26/averaging-basecall-quality-scores-the-right-way/
+        """
+
+        return -10 * math.log(sum([10 ** (q / -10) for q in quals]) / len(quals), 10)
 
     # SELECTION AND MAPPING METHODS
 
-    def watch(self, path, callback=None, index=True, recursive=False, async=False, sleep=True):
-        """Pomoxis async watchdog to watch path for .fast5
+    def watch(self, path, callback=None, index=True, recursive=False, async=False, keep_active=True):
+
+        """Pomoxis async watchdog to index path for .fast5
         files, apply callback function to filepath on event detection.
 
         :param path:
@@ -215,11 +549,11 @@ class PoreMongo:
                   "same path will be updated. If path is not in database, a new "
                   "model is inserted.")
             print(self.fast5)
-            return watch_path(path, self.upsert_callback, recursive=recursive, async=async, sleep=sleep)
+            return watch_path(path, self.upsert_callback, recursive=recursive, async=async, keep_active=keep_active)
         else:
             if callback is None:
                 raise ValueError("Must provide callback function for watchdog callback.")
-            return watch_path(path, callback, recursive=recursive, async=async, sleep=sleep)
+            return watch_path(path, callback, recursive=recursive, async=async, keep_active=keep_active)
 
     # TODO
     def upsert_callback(self, fpath):
@@ -229,7 +563,7 @@ class PoreMongo:
         :param fpath:
         :return:
         """
-        fast5 = self._get_doc(fpath, scan_file=True)
+        fast5 = _get_doc(fpath, scan_file=True)
         print(f"Fast5: {time.time()} name={str(fast5.name)}")
 
     def schedule_run(self, fast5, outdir="run_sim_1", scale=1.0, timeout=None):
@@ -317,8 +651,8 @@ class PoreMongo:
         return runs
 
     @staticmethod
-    def sample(file_objects, limit=3, tags=None, proportion=None, unique=False,
-               exclude=None, return_documents=True):
+    def sample(file_objects, limit=3, tags=None, proportion=None, unique=False, include_tags=None,
+               exclude_name=None, return_documents=True):
 
         """ Add query to a queryset (file_objects) to sample a limited number of file objects;
         these can be sampled proportionally by tags. """
@@ -326,12 +660,18 @@ class PoreMongo:
         if isinstance(tags, str):
             tags = [tags]
 
+        if isinstance(include_tags, str):
+            include_tags = [include_tags]
+
         if tags:
 
-            if exclude:
-                query_pipeline = [{"$match": {"name": {"$nin": exclude}}}]
+            if exclude_name:
+                query_pipeline = [{"$match": {"name": {"$nin": exclude_name}}}]
             else:
                 query_pipeline = []
+
+            if include_tags:
+                query_pipeline += [{"$match": {"tags": {"$all": include_tags}}}]
 
             # Random sample across given tags:
             if not proportion:
@@ -344,12 +684,12 @@ class PoreMongo:
 
             # Equal size of random sample for each tag:
             elif proportion == "equal":
-                print(f"Tags specified, equal proportions, sample {limit} Fast5 for each tag: {tags}")
+                print(f"Tags specified, equal proportions, sample {int(limit/len(tags))} Fast5 for each tag: {tags}")
                 results = []
                 for tag in tags:
                     query_pipeline += [
                         {"$match": {"tags": {"$in": [tag]}}},
-                        {"$sample": {"size": limit}}
+                        {"$sample": {"size": int(limit/len(tags))}}
                     ]
                     results += list(file_objects.aggregate(*query_pipeline, allowDiskUse=True))
             else:
@@ -495,147 +835,6 @@ class PoreMongo:
             if pbar:
                 pbar.update(1)
 
-    # FILE METHODS
-    # TODO: Config with paths and tags, comments
-    def index(self, index_path: str, recursive: bool = True, scan: bool = True, insert: bool = False, ncpu: int = 1,
-              batch_size: int = 1000, reconnect: bool = True):
-
-        """ Index all files with extension in unique index_path and assign primary index_id and save in
-        corresponding collection_id of DB. Optional recursive search, printing summary and tagging.
-
-        :param index_path:          str            index_path to index
-        :param recursive:           bool           recursive search in directory tree
-        :param scan                 bool
-        :param insert               bool
-        :param ncpu                 int
-        :param batch_size           int
-        :param reconnect            bool
-
-        """
-
-        if self.verbose:
-            self.print_index_message(index_path, ".fast5", insert)
-
-        # Can we keep this a generator for really large file collections?
-        file_paths = self.files_from_path(path=index_path, extension=".fast5", recursive=recursive)
-
-        self.index_fast5(file_paths=file_paths, scan_file=scan, insert=insert, batch_size=batch_size,
-                         ncpu=ncpu, reconnect=reconnect)
-
-    def index_fast5(self, file_paths, scan_file=False, insert=False, ncpu=1, batch_size=1000, reconnect=True):
-
-        """ Index Fast5 files with supported extensions (model schemes for DB) in batches """
-
-        total = 0
-        batch_number = 0
-
-        # TODO: Check generators / lists:
-
-        if ncpu > 1:
-
-            if self.is_connected():
-                self.disconnect()
-
-            print(f"Multiprocessing enabled: {Fore.RED}Disconnected{Style.RESET_ALL} from current MongoClient\n")
-            print(f"Parsing file paths for batching and parallel inserts to PoreMongo...")
-
-            chunks = self._chunk_seq(list(file_paths), batch_size)  # in memory
-
-            if self.verbose:
-                self.print_ncpu_insert_message(len(chunks), batch_size, ncpu)
-
-            def cbk(inserted):
-
-                print(f"Inserted {Fore.YELLOW}{inserted[0]}{Style.RESET_ALL} documents (Fast5) "
-                      f"(batch {Fore.GREEN}{inserted[1]}{Style.RESET_ALL}) ")
-
-            pool = mp.Pool(processes=ncpu)
-            for i, chunk in enumerate(chunks):
-                pool.apply_async(self._insert_doc, (chunk, i, scan_file,), callback=cbk)
-
-            pool.close()
-            pool.join()
-
-            print(f"\nMultiprocessing completed: {Fore.GREEN}reconnected{Style.RESET_ALL} PoreMongo with MongoClient")
-            if reconnect:
-                self.connect()
-            else:
-                print(f"You may want to reconnnect Poremongo instance to MongoDB (poremongo.connect).")
-
-        else:
-            # This is a batch wise insert on a generator:
-            batch = []
-            for file_path in file_paths:
-                m = self._get_doc(file_path, scan_file=scan_file, to_mongo=False, model=Fast5)
-                batch.append(m)
-
-                # at each batch size save batch to collection and clear batch
-                if len(batch) == batch_size:
-                    total = self._save_batch(batch, batch_number, total,
-                                             model=Fast5, insert=insert)
-                    batch = []
-                    batch_number += 1
-
-            # save last batch
-            if batch:
-                self._save_batch(batch, batch_number, total,
-                                 model=Fast5, insert=insert)
-
-    @staticmethod
-    def _get_doc(file_path, scan_file=True, to_mongo=False, model=Fast5):
-        """ Construct Fast5 document, optionally scan file for content and transform to dict
-        for insert_multiple in PyMongo  (multiprocessing compatible inserts to MongoDB
-        """
-        fname = os.path.basename(file_path)
-        fast5 = model(name=fname, path=file_path, dir=os.path.dirname(file_path))
-
-        if scan_file:
-            fast5.scan_file(update=False)
-
-        if to_mongo:
-            return fast5.to_mongo()
-
-        return fast5
-
-    def _insert_doc(self, chunk, i, scan_file):
-
-        """ For multiprocessing use MongoClient
-        directly to spawn new connections to Fast5 collection
-
-        :param chunk:
-
-        """
-
-        batch = [self._get_doc(file_path, scan_file=scan_file, to_mongo=True, model=Fast5) for file_path in chunk]
-
-        client = pymongo.MongoClient(self.uri)
-        collection = client.poremongo.fast5
-        collection.insert_many(batch)
-
-        client.close()  # ! Important, will otherwise refuse more connections
-
-        return len(batch), i
-
-    def _save_batch(self, batch, batch_number, total, model=Fast5, insert=False):
-
-        if insert:
-            model.objects.insert(batch)
-            if self.verbose:
-                total += len(batch)
-                self.print_insert_message(len(batch), batch_number, model, total)
-        else:
-            new = 0
-            for m in batch:
-                try:
-                    m.save()
-                    new += 1
-                except NotUniqueError:
-                    pass
-                total += 1
-            if self.verbose:
-                self.print_insert_message(new, batch_number, model, total)
-
-        return total
 
     def files_from_cache(self):
 
@@ -646,7 +845,7 @@ class PoreMongo:
         pass
 
     @staticmethod
-    def files_from_path(path, extension, recursive):
+    def files_from_path(path: str, extension: str, recursive: bool):
 
         if not recursive:
             # Yielding files
@@ -661,57 +860,6 @@ class PoreMongo:
                     if file.endswith(extension):
                         yield os.path.abspath(os.path.join(p, file))
 
-    # Database methods paths for tags and comments
-
-    def tag(self, tags, path_query=None, name_query=None, tag_query=None, raw_query=None,
-            remove=False, recursive=True, not_in=False):
-
-        """ Add tags to all files with extension tag_path if and only if they are already indexed in the DB.
-        Default recursive (for all Fast5 where tag_path in file_path) or optional non-recursive search
-        (for all Fast5 where tag_path is parent_path) and printing summary.
-
-        :param tags:
-        :param path_query:
-        :param name_query:
-        :param tag_query:
-        :param remove:
-        :param recursive:
-        :return:
-        """
-
-        if isinstance(tags, str):
-            tags = (tags,)
-
-        #
-        # if not self._one_active_param(path_query, name_query, tag_query):
-        #     raise ValueError("Tags can only be attached by one (str) "
-        #                      "or multiple (list) attributes of either: path, name or tag")
-
-        # this cna be memory intensive for 100,000 + documents! (
-
-        if self.verbose:
-            print("Updating tags: {}".format(tags))
-
-        objects = self.query(model=Fast5, raw_query=raw_query, path_query=path_query, name_query=name_query,
-                             tag_query=tag_query, recursive=recursive, not_in=not_in)
-
-        if remove:
-            objects.update(pull_all__tags=tags)
-        else:
-            objects.update(add_to_set__tags=tags)
-
-    def _update_by_id_query(self, batch, tags, remove):
-
-        print(f"Updating tags of batch, displaying first three IDs in batch: {batch[:3]}")
-
-        query = {"_id": {"$in": batch}}  # Does a limited batch query by ID
-
-        docs = self.query(raw_query=query)
-
-        if remove:
-            docs.update(pull_all__tags=tags)
-        else:
-            docs.update(add_to_set__tags=tags)
 
     def comment(self, comments, path_query=None, name_query=None, tag_query=None, remove=False, recursive=True):
 
@@ -774,7 +922,7 @@ class PoreMongo:
         return query_results
 
     def query(self, raw_query=None, path_query: str or list = None, tag_query: str or list = None,
-              name_query: str or list = None, query_logic: str = "AND", model=Fast5,
+              name_query: str or list = None, query_logic: str = "AND", model: Fast5 or Read or Sequence=Fast5,
               abspath: bool = False, recursive: bool = True, not_in: bool = False):
 
         """ API for querying file models using logic chains on path, tag or name queries. MongoEngine queries to path,
@@ -832,7 +980,7 @@ class PoreMongo:
     def get_tag_query(tag_query, not_in):
 
         if not_in:
-            return [] # TODO
+            return []  # TODO
         else:
             return [Q(tags=tq) for tq in tag_query]
 
@@ -841,7 +989,7 @@ class PoreMongo:
 
         if not_in:
             return [Q(__raw__={"name": {'$regex': '^((?!{string}).)*$'.format(string=nq)}})
-                               for nq in name_query]  # case sensitive regex (not contains)
+                    for nq in name_query]  # case sensitive regex (not contains)
         else:
             return [Q(name__contains=nq) for nq in name_query]
 
@@ -853,7 +1001,7 @@ class PoreMongo:
         if recursive:
             if not_in:
                 return [Q(__raw__={"path": {'$regex': '^((?!{string}).)*$'.format(string=pq)}})
-                                   for pq in path_query]  # case sensitive regex (not contains)
+                        for pq in path_query]  # case sensitive regex (not contains)
             else:
                 return [Q(path__contains=pq) for pq in path_query]
         else:
@@ -870,77 +1018,17 @@ class PoreMongo:
 
         return chained
 
-    ###################
-    # Message Methods #
-    ###################
-
-    @staticmethod
-    def print_ncpu_insert_message(nb_chunks, batch_size, ncpu):
-
-        print(dedent(f"""
-        Starting database inserts with:
-
-        - processors:       {Fore.YELLOW}{ncpu}{Style.RESET_ALL}        
-        - total batches:    {Fore.YELLOW}{nb_chunks}{Style.RESET_ALL}   
-        - files per batch:  {Fore.YELLOW}{batch_size}{Style.RESET_ALL}
-        """))
-
-    @staticmethod
-    def print_insert_message(batch_length, batch_number, model, total):
-
-        print(f"Inserted {Fore.GREEN}{batch_length}{Style.RESET_ALL} / "
-              f"{Fore.YELLOW}{str(total).ljust(8)}{Style.RESET_ALL} files into"
-              f" {Fore.YELLOW}{model.__name__}{Style.RESET_ALL} collection "
-              f"(batch {Fore.GREEN}{batch_number}{Style.RESET_ALL})")
-
-    @staticmethod
-    def print_index_message(index_path, extension, insert):
-
-        if insert:
-            print(dedent(f"""
-            {Fore.RED}======================================================{Style.RESET_ALL}
-                            {Fore.YELLOW}INSERT is activated:{Style.RESET_ALL}
-              Throws error, if any file path in collection of DB.
-            {Fore.RED}======================================================{Style.RESET_ALL}
-            """))
-
-        print(dedent(f"""
-        Collecting and indexing files ({extension}) in:
-
-        {Fore.YELLOW}{index_path}{Style.RESET_ALL}
-
-        This might take a while... how about a cup of coffee?
+    # Small helpers
 
 
-                            )  (
-                          (   ) )     
-                           ) ( (              
-                         _________       
-                      .-'---------| 
-                     ( C|/\/\/\/\/| 
-                      '-./\/\/\/\/|
-                        '_________'             
-                         '-------'  
+    def decompose_uri(self):
 
-        """))
-
-    def print_connected_message(self):
-
-        print(dedent(f"""
-        {Fore.YELLOW}PoreMongo connected{Style.RESET_ALL}
-        ===========================
-
-        {Fore.YELLOW}{Fore.GREEN}{self.decompose_uri(self.uri)}{Style.RESET_ALL}
-        """))
-
-    @staticmethod
-    def decompose_uri(uri):
-
-        if "localhost" not in uri:
-            user_split = uri.replace("mongodb://", "").split("@")
-            return "mongodb://" + user_split.pop(0).split(":")[0] + "@" + "@".join(user_split)
+        if "localhost" not in self.uri:
+            user_split = self.uri.replace("mongodb://", "").split("@")
+            return "mongodb://" + user_split.pop(0).split(":")[0] + \
+                   "@" + "@".join(user_split)
         else:
-            return uri
+            return self.uri
 
 
 
