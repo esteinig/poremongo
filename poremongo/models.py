@@ -75,7 +75,6 @@ class Fast5(Document):
 
     # Classification
     tags = ListField(StringField(), required=False)
-    comments = ListField(StringField(), required=False)
 
     # Meta
     meta = {"collection": "fast5"}
@@ -126,16 +125,26 @@ class Fast5(Document):
         fast5 = Fast5File(self.path)
 
         exp_start_time, sampling_rate = self._get_time_and_sampling_rate(fast5)
-        reads = self._create_reads(info=info, fast5=fast5, sampling_rate=sampling_rate,
-                                   exp_start_time=exp_start_time, update=update)
+        reads = self._create_reads(
+            info=info,
+            fast5=fast5,
+            sampling_rate=sampling_rate,
+            exp_start_time=exp_start_time,
+            update=update
+        )
 
         if not update:
             self.reads = reads
 
         if update:
-            self.update(set__has_reads=True, set__valid=info.valid, set__version=info.version,
-                        set__read_number=len(info.read_info), set__sampling_rate=sampling_rate,
-                        set__exp_start_time=exp_start_time)
+            self.update(
+                set__has_reads=True,
+                set__valid=info.valid,
+                set__version=info.version,
+                set__read_number=len(info.read_info),
+                set__sampling_rate=sampling_rate,
+                set__exp_start_time=exp_start_time
+            )
         else:
             self.has_reads = True
             self.valid = info.valid
@@ -144,8 +153,14 @@ class Fast5(Document):
             self.sampling_rate = sampling_rate
             self.exp_start_time = exp_start_time
 
-    def _create_reads(self, info: Fast5Info, fast5: Fast5File, sampling_rate: float,
-                      exp_start_time: float, update: bool=False) -> list:
+    def _create_reads(
+        self,
+        info: Fast5Info,
+        fast5: Fast5File,
+        sampling_rate: float,
+        exp_start_time: float,
+        update: bool = False
+    ) -> list:
 
         reads = []
         for attr in info.read_info:
@@ -187,24 +202,40 @@ class Fast5(Document):
 
         return exp_start_time, sampling_rate
 
-    def get_reads(self, window_size: int=None, window_step: int=None,
-                  scale: bool=False, template: bool=True, return_all=True) -> np.array:
+    def get_reads(
+        self,
+        window_size: int = None,
+        window_step: int = None,
+        scale: bool = False,
+        template: bool = True,
+        return_all: bool = True
+    ) -> np.array:
 
         """ Scaled pA values (float32) or raw DAQ values (int16),
         return first read (1D) or if all_reads = True return
         array of all reads """
 
         if template:
-            reads = np.array([Fast5File(self.path).get_raw_data(scale=scale)])
+            reads = np.array(
+                [Fast5File(self.path).get_raw_data(scale=scale)]
+            )
         else:
-            reads = np.array([Fast5File(self.path).get_raw_data(attr.read_number, scale=scale)
-                              for attr in Fast5Info(self.path).read_info])
+            reads = np.array(
+                [Fast5File(self.path).get_raw_data(
+                    attr.read_number, scale=scale
+                ) for attr in Fast5Info(self.path).read_info]
+            )
 
-        # Windows will only return full-sized windows, incomplete windows at end of read are not included -
+        # Windows will only return full-sized windows,
+        # incomplete windows at end of read are not included -
         # this is necessary for complete tensors in training and prediction:
 
         if window_size and window_step:
-            reads = np.array([view_as_windows(read, window_shape=window_size, step=window_step) for read in reads])
+            reads = np.array(
+                [view_as_windows(
+                    read, window_shape=window_size, step=window_step
+                ) for read in reads]
+            )
 
         if return_all:
             return reads
@@ -222,7 +253,9 @@ class Fast5(Document):
         return (time_as_date - epoch).total_seconds()
 
     @staticmethod
-    def calculate_timestamp(read_start_time, read_duration, exp_start_time, sampling_rate) -> float:
+    def calculate_timestamp(
+            read_start_time, read_duration, exp_start_time, sampling_rate
+    ) -> float:
         """Calculates the epoch time when the read finished sequencing.
         :param read_start_time:
         :param read_duration:

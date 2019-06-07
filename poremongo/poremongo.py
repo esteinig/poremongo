@@ -1,4 +1,4 @@
-""" Minimal extension of PoreDB by Nick Loman et al. for Fast5 management in MongoDB """
+""" Basically PoreDB for Fast5 management in MongoDB """
 
 import os
 import time
@@ -16,10 +16,8 @@ import multiprocessing as mp
 
 from scp import SCPClient
 from pathlib import Path
-from textwrap import dedent
 from functools import reduce
 from operator import or_, and_
-from colorama import Fore, Style
 from datetime import datetime, timedelta
 
 from mongoengine import connect
@@ -28,7 +26,7 @@ from pymongo.errors import ServerSelectionTimeoutError
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from poremongo.watchdog import watch_path
+from poremongo.watchdog import FileWatcher
 from poremongo.models import Fast5, Read, Sequence
 from poremongo.utils import _get_doc, _insert_doc
 
@@ -390,12 +388,6 @@ class PoreMongo:
             raw_query=None, remove=False, recursive=True, not_in=False):
 
         """
-        Add tags to all files with extension tag_path
-        if and only if they are already indexed in the DB.
-
-        Default recursive (for all Fast5 where tag_path in file_path)
-        or optional non-recursive search
-        (for all Fast5 where tag_path is parent_path) and printing summary.
 
         :param tags:
         :param path_query:
@@ -403,6 +395,8 @@ class PoreMongo:
         :param tag_query:
         :param remove:
         :param recursive:
+        :param not_in
+        :param raw_query
         :return:
         """
 
@@ -425,54 +419,36 @@ class PoreMongo:
         else:
             objects.update(add_to_set__tags=tags)
 
-
     ##########################
     #     DB Summaries       #
     ##########################
 
-    def display(self, cat):
-
-        if cat in ("tags", "tag"):
-            pipe = [
-                {"$match": {"tags": {"$not": {"$size": 0}}}},
-                {"$unwind": "$tags"},
-                {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
-                {"$match": {"count": {"$gte": 1}}},
-                {"$sort": {"count": -1}},
-                {"$limit": 100}
-            ]
-            result = list(Fast5.objects.aggregate(*pipe))
-            msg = self._get_display_tag_msg(result)
-            print(msg)
-
-        elif cat in ("db", "database"):
-            pass
-        else:
-            raise ValueError("Provide valid display category.")
-
     @staticmethod
-    def _get_display_tag_msg(result):
+    def display_tags(self, limit: int = 100):
 
-        msg = f"Documents per tag in current PoreMongo DB:\n\n"
-        msg += f"{Fore.CYAN}{'Tag':<10}{'Count':>10}{Style.RESET_ALL}\n"
-        msg += "=====================\n\n"
-        for r in result:
-            msg += f"{Fore.YELLOW}{r['_id']:<10}{Style.RESET_ALL}={Fore.GREEN}{r['count']:>10}{Style.RESET_ALL}\n"
-        msg += "\n=====================\n"
+        pipe = [
+            {"$match": {"tags": {"$not": {"$size": 0}}}},
+            {"$unwind": "$tags"},
+            {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
+            {"$match": {"count": {"$gte": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": limit}
+        ]
 
-        return msg
+        tag_counts = list(
+            Fast5.objects.aggregate(*pipe)
+        )
 
-
+        for x in tag_counts:
+            print(
+             f"{x['_id']:<10} = {x['count']:>10}"
+            )
 
     #########################
     #   Cleaning DB + QC    #
     #########################
 
-    ##########################
-    #   Fast5: Index + Tags  #
-    ##########################
-
-    # Basecall, associate sequence label, pipelines for tasks
+    # TODO: parse FASTQ for basecalled reads and attach Sequence model to Fast5
 
     def link_fastq(self, fastq):
 
@@ -483,7 +459,9 @@ class PoreMongo:
         fq_stats = {}
         i = 0
         for seq in fq_reader:
-            qual = self.average_quality([ord(x) - 33 for x in seq.qual])
+            qual = self.average_quality(
+                [ord(x) - 33 for x in seq.qual]
+            )
             seq_info = seq.id.split(" ")
 
             fq_stats[seq_info[0]] = {'length': len(seq), 'quality': qual}
@@ -491,46 +469,74 @@ class PoreMongo:
             if i == 5:
                 break
 
-        print(fq_stats.keys())
+        print(
+            fq_stats.keys()
+        )
 
-        # Return only the Fast5 objects where the nested reads have the parsed IDs
-        fast5 = Fast5.objects(__raw__={'reads.id': {'$in': list(fq_stats.keys())}})
+        # Return only the Fast5 objects where the
+        # nested reads have the parsed IDs
+        fast5 = Fast5.objects(
+            __raw__={
+                'reads.id': {'$in': list(
+                    fq_stats.keys()
+                )}
+            }
+        )
 
         fq = Path(fastq)
         fq_path, fq_dir, fq_name = fq.absolute(), fq.parent.absolute(), fq.name
 
         for f5 in fast5:
             if len(f5.reads) > 1:
-                print(f"Detected unsupported complementary strand, skipping Fast5: {fast5.name}.")
+                print(f"Detected unsupported complementary"
+                      f" strand, skipping Fast5: {fast5.name}.")
                 continue
 
-            for read in f5.reads:  # TODO: Support for complementary strand at some stage.
-                seq = Sequence(id=None, basecaller="albacore", version="2.1", path=fq_path, dir=fq_dir, name=fq_name,
-                               quality=fq_stats[read.id]["quality"], length=fq_stats[read.id]["length"])
+            for read in f5.reads:
+                seq = Sequence(
+                    id=None,
+                    basecaller="albacore",
+                    version="2.1",
+                    path=fq_path,
+                    dir=fq_dir,
+                    name=fq_name,
+                    quality=fq_stats[read.id]["quality"],
+                    length=fq_stats[read.id]["length"]
+                )
 
-                read.sequences.append(seq)  # Could have multiple basecalled sequences
+                read.sequences.append(
+                    seq
+                )  # Could have multiple basecalled sequences
+
                 print(read.sequences)
-
-    def basecall(self, fast5, outdir="basecalls", ncpu=16):
-
-        pass
 
     @staticmethod
     def average_quality(quals):
 
         """
-        Receive the integer quality scores of a read and return the average quality for that read
-        First convert Phred scores to probabilities, calculate average error probability and
+        Receive the integer quality scores of a read and return
+        the average quality for that read
+
+        First convert Phred scores to probabilities,
+        calculate average error probability and
         convert average back to Phred scale.
 
-        https://gigabaseorgigabyte.wordpress.com/2017/06/26/averaging-basecall-quality-scores-the-right-way/
+        https://gigabaseorgigabyte.wordpress.com/2017/06/26/
+        averaging-basecall-quality-scores-the-right-way/
         """
 
         return -10 * math.log(sum([10 ** (q / -10) for q in quals]) / len(quals), 10)
 
     # SELECTION AND MAPPING METHODS
 
-    def watch(self, path, callback=None, index=True, recursive=False, async=False, keep_active=True):
+    def watch(
+        self,
+        path,
+        callback=None,
+        recursive=False,
+        regexes=(".*\.fastq$",),
+        **kwargs
+    ):
 
         """Pomoxis async watchdog to index path for .fast5
         files, apply callback function to filepath on event detection.
@@ -539,24 +545,31 @@ class PoreMongo:
         :param callback:
         :param index:
         :param recursive:
-        :param async:
         :param sleep:
         :return:
         """
 
-        if index:
-            print("Upserting Fast5 files into Database. Existing models with the "
-                  "same path will be updated. If path is not in database, a new "
-                  "model is inserted.")
-            print(self.fast5)
-            return watch_path(path, self.upsert_callback, recursive=recursive, async=async, keep_active=keep_active)
-        else:
-            if callback is None:
-                raise ValueError("Must provide callback function for watchdog callback.")
-            return watch_path(path, callback, recursive=recursive, async=async, keep_active=keep_active)
+        if callback is None:
+            callback = self.callback_upsert
 
-    # TODO
-    def upsert_callback(self, fpath):
+        fw = FileWatcher()
+
+        try:
+            fw.watch_path(
+                path=path,
+                callback=callback,
+                recursive=recursive,
+                regexes=regexes,
+                **kwargs,
+            )
+        except KeyboardInterrupt:
+            self.logger.info('Path watcher interrupted by user. Exiting.')
+            exit(1)
+        except SystemError:
+            self.logger.info('Path watcher interrupted by system. Exiting.')
+            exit(1)
+
+    def callback_upsert(self, fpath):
         """Callback for upsert of newly detected .fast5 file
         into database as Fast5 model.
 

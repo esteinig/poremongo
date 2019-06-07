@@ -1,29 +1,173 @@
 """
 Code adapted from Pomoxis: https://github.com/nanoporetech/pomoxis
 
-This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+This Source Code Form is subject to the terms
+of the Mozilla Public License, v. 2.0.
+
 (c) 2016 Oxford Nanopore Technologies Ltd.
 """
 
-import asyncio
+import warnings
+
+warnings.filterwarnings("ignore")
+
 import os
-import time
+import json
+import logging
+
+from pathlib import Path
 
 from watchdog.observers import Observer
 from watchdog.events import RegexMatchingEventHandler
 from watchdog.utils import has_attribute, unicode_paths
-import logging
 
-logger = logging.getLogger(__name__)
+from paramiko import client
 
-EVENT_TYPE_MOVED = 'moved'
-EVENT_TYPE_DELETED = 'deleted'
-EVENT_TYPE_CREATED = 'created'
-EVENT_TYPE_MODIFIED = 'modified'
+EVENT_TYPE_MOVED = "moved"
+EVENT_TYPE_DELETED = "deleted"
+EVENT_TYPE_CREATED = "created"
+EVENT_TYPE_MODIFIED = "modified"
+
+
+class SSH:
+
+    def __init__(
+        self,
+        address="zodiac.hpc.jcu.edu.au",
+        port=8822,
+        username=None,
+        password=None,
+        secrets: Path = None,
+    ):
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="[%(asctime)s] [%(module)-10s] \t %(message)s",
+            datefmt="%H:%M:%S",
+        )
+
+        if secrets:
+            user, password = self._read_secrets(secrets)
+
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(f"Connect to server: {address}")
+
+        self.client = client.SSHClient()
+        self.client.set_missing_host_key_policy(
+            client.AutoAddPolicy()
+        )
+
+        self.client.connect(
+            address,
+            port=port,
+            username=username,
+            password=password,
+            look_for_keys=False,
+        )
+
+        self.sftp = self.client.open_sftp()
+
+    @staticmethod
+    def _read_secrets(file: Path):
+
+        with file.open("r") as secret:
+            data = json.load(secret)
+            return data["username"], data["password"]
+
+    def put(self, local_file: str, remote_file: str):
+
+        self.logger.info(
+            f"Copy file {local_file} to remote path: {remote_file}"
+        )
+
+        self.sftp.put(
+            str(local_file), str(remote_file)
+        )
+
+        self.logger.info(f"Copied file {local_file} to server.")
+
+    def get(self, remote: Path, local: Path):
+
+        self.logger.info(f"Get file from server: {remote}")
+
+        self.sftp.get(
+            str(remote), str(local)
+        )
+
+        self.logger.info(f"Copied file from server to: {local}")
+
+    def command(self, command: str):
+
+        self.logger.info(f"Executing command on remote: {command[:20]} ...")
+        if self.client:
+            stdin, stdout, stderr = self.client.exec_command(command)
+
+            print(stdout)
+
+
+class FileWatcher:
+
+    """ Watch for new files and transfer to remote UNIX server """
+
+    def __init__(self, ssh: SSH = None):
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s::%(module)s   %(message)s",
+            datefmt="%H:%M:%S",
+        )
+
+        self.ssh = ssh
+
+        self.logger = logging.getLogger(__name__)
+
+    def watch_path(
+        self,
+        path: Path,
+        callback: callable,
+        recursive=False,
+        regexes=(".*\.fastq$",),
+        **kwargs,
+    ):
+        """ Watch a filepath for new files, applying callback to files
+
+        :param path: path to watch
+        :param callback: callback to apply to newly found files
+        :param recursive: recursively watch path?
+        :param regexes: filter files by applying regex
+        :param kwargs: additional keyword arguments to pass to callback
+        """
+
+        self.logger.info("Initiate event handler.")
+        handler = StandardRegexMatchingEventHandler(
+            callback=callback, regexes=regexes, **kwargs
+        )
+
+        self.logger.info("Initiate watchdog event module.")
+        watch = Watcher(str(path), event_handler=handler, recursive=recursive)
+        self.logger.info(f"Walls to watch: {path}")
+        self.logger.info(f"Night gathers, and now my watch begins ...")
+        watch.start()
+
+    def callback_transfer(self, fname: str, remote_directory: str):
+
+        if not self.ssh:
+            raise ValueError("Transfer callback: could not detect SSH")
+
+        self.ssh.put(
+            fname, remote_directory + "/" + fname
+        )
+
+    def callback_nextflow(self, fname: str):
+
+        self.logger.info(f"File detected: {Path(fname).name}")
+
+
+# Helper functions
 
 
 def wait_for_file(fname):
-    """Block until a filesize remains constant."""
+    """ Block until a file size remains constant """
     size = None
     while True:
         try:
@@ -37,9 +181,14 @@ def wait_for_file(fname):
         size = newsize
 
 
+# EventHandler classes
+
+
 class StandardRegexMatchingEventHandler(RegexMatchingEventHandler):
-    def __init__(self, callback, **kwargs):
-        RegexMatchingEventHandler.__init__(self, **kwargs)
+    def __init__(self, callback, regexes, **kwargs):
+        RegexMatchingEventHandler.__init__(self, regexes=regexes)
+
+        self.callback_arguments = kwargs
         self.callback = callback
 
     def _process_file(self, event):
@@ -53,7 +202,8 @@ class StandardRegexMatchingEventHandler(RegexMatchingEventHandler):
             fname = event.dest_path
         # need to wait for file to be closed
         wait_for_file(fname)
-        return self.callback(fname)
+
+        return self.callback(fname, **self.callback_arguments)
 
     def dispatch(self, event):
         """Dispatch an event after filtering. We handle
@@ -68,7 +218,7 @@ class StandardRegexMatchingEventHandler(RegexMatchingEventHandler):
             return
 
         paths = []
-        if has_attribute(event, 'dest_path'):
+        if has_attribute(event, "dest_path"):
             paths.append(unicode_paths.decode(event.dest_path))
         if event.src_path:
             paths.append(unicode_paths.decode(event.src_path))
@@ -80,62 +230,12 @@ class StandardRegexMatchingEventHandler(RegexMatchingEventHandler):
             self._process_file(event)
 
 
-class AIORegexMatchingEventHandler(RegexMatchingEventHandler):
-    def __init__(self, callback, loop=None, **kwargs):
-        """asyncio compatible minimal regex matching event
-        handler for watchdog.
-        :param callback: function to apply to filenames.
-        :param loop: ayncio-like event loop.
-        """
-
-        RegexMatchingEventHandler.__init__(self, **kwargs)
-        self._loop = loop or asyncio.get_event_loop()
-        self.callback = callback
-
-    async def _process_file(self, event):
-        """Process an event when a file is created (or moved).
-        :param event: watchdog event.
-        :returns: result of applying `callback` to watched file.
-        """
-        if event.event_type == EVENT_TYPE_CREATED:
-            fname = event.src_path
-        else:
-            fname = event.dest_path
-        # need to wait for file to be closed
-        wait_for_file(fname)
-        return self.callback(fname)
-
-    def dispatch(self, event):
-        """Dispatch an event after filtering. We handle
-        creation and move events only.
-
-        :param event: watchdog event.
-        :returns: None
-        """
-        if event.event_type not in (EVENT_TYPE_CREATED, EVENT_TYPE_MOVED):
-            return
-        if self.ignore_directories and event.is_directory:
-            return
-
-        paths = []
-        if has_attribute(event, 'dest_path'):
-            paths.append(unicode_paths.decode(event.dest_path))
-        if event.src_path:
-            paths.append(unicode_paths.decode(event.src_path))
-
-        if any(r.match(p) for r in self.ignore_regexes for p in paths):
-            return
-
-        if any(r.match(p) for r in self.regexes for p in paths):
-            self._loop.call_soon_threadsafe(asyncio.async, self._process_file(event))
-
-
 class Watcher(object):
     def __init__(self, path, event_handler, recursive=False):
         """Wrapper around common watchdog idiom.
-        :param path: path to index for new files.
+        :param path: path to watch for new files.
         :param event_handler: subclass of watchdog.events.FileSystemEventHandler.
-        :param recursive: index path recursively?
+        :param recursive: watch path recursively?
         """
         self.observer = Observer()
         self.observer.schedule(event_handler, path, recursive)
@@ -149,35 +249,3 @@ class Watcher(object):
         self.observer.stop()
         self.observer.join()
 
-
-def watch_path(path, callback, recursive=False, regexes=['.*\.fast5$'], async=False, keep_active=True):
-    """Watch a filepath indefinitely for new files, applying callback to files.
-    :param path: path to index.
-    :param callback: callback to apply to newly found files.
-    :param recursive: recursively index path?
-    :param regexes: filter files by applying regex.
-    :param async: use asyncio regex event handler.
-    :param sleep: enter infinite loop to keep thread alive.
-    """
-
-    if async:
-        handler = AIORegexMatchingEventHandler(callback=callback, regexes=regexes)
-    else:
-        handler = StandardRegexMatchingEventHandler(callback=callback, regexes=regexes)
-
-    watch = Watcher(path, event_handler=handler, recursive=recursive)
-
-    print('Starting to index {} for new files matching {}.'.format(path, regexes))
-    watch.start()
-
-    # I am not sure how the async event handler works in this case. It is running, but
-    # has to be stopped manually. Async does not work with keeping the thread alive.
-    if keep_active:
-        try:
-            # Simulate application activity (which keeps the main thread alive).
-            while True:
-                time.sleep(2)
-        except (KeyboardInterrupt, SystemExit):
-            watch.stop()
-
-    return watch
