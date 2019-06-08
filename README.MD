@@ -4,7 +4,7 @@
 ![](https://img.shields.io/badge/docs-repo-green.svg)
 ![](https://img.shields.io/badge/lifecycle-maturing-blue.svg)
 
-## Overview
+### Overview
 ---
 
 Interface for nanopore signal read management in MongoDB.
