@@ -5,6 +5,7 @@ import time
 import math
 import tqdm
 import json
+import signal
 import random
 import shutil
 import pymongo
@@ -19,22 +20,23 @@ from pathlib import Path
 from functools import reduce
 from operator import or_, and_
 from datetime import datetime, timedelta
-
+from deprecation import deprecated
 from mongoengine import connect
 from mongoengine.queryset.visitor import Q
 from pymongo.errors import ServerSelectionTimeoutError
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from poremongo.watchdog import FileWatcher
 from poremongo.models import Fast5, Read, Sequence
-from poremongo.utils import _get_doc, _insert_doc
+from poremongo.utils import _get_doc, _insert_docs, run_cmd
 
 logging.basicConfig(
     level=logging.INFO,
-    format="[%(asctime)s] [%(name)-12s] \t %(message)s",
+    format="[%(asctime)s]   %(message)s",
     datefmt='%H:%M:%S'
 )
+
+VERSION = '0.3'
 
 
 class PoreMongo:
@@ -61,8 +63,13 @@ class PoreMongo:
 
         if config:
             self._parse_config(config)
+        else:
+            self.config = dict()
 
         self.mock = mock
+
+        self.local = True if \
+            self.uri == 'mongodb://localhost:27017/poremongo' else False
 
         self.ssh = None
         self.scp = None
@@ -71,8 +78,36 @@ class PoreMongo:
         self.db = None  # Client DB
         self.fast5 = None  # Fast5 collection
 
+        self.mongod_proc = None
+        self.mongod_path: Path or None = None
+        self.mongod_pid: int or None = None
+
         if connect:
             self.connect(ssh=ssh, is_mock=mock)
+
+    def start_mongodb(
+            self, dbpath: Path = Path('~/.poremongo/db'), port: int = 27017
+    ):
+
+        dbpath.mkdir(parents=True, exist_ok=True)
+
+        self.logger.info(f'Running mongod DB client at {dbpath}')
+
+        proc = run_cmd(
+            f'mongod --dbpath {dbpath} --port {port}', shell=True
+        )
+
+        self.mongod_proc = proc
+        self.mongod_path = dbpath
+        self.mongod_pid = int(proc.pid)
+
+        self.logger.info(f'Started MongoDB with pid: {proc.pid}')
+
+    def terminate_mongodb(self):
+
+        self.logger.info(f'Terminated MongoDB with pid: {self.mongod_pid}')
+
+        os.killpg(self.mongod_proc.pid, signal.SIGTERM)
 
     def _parse_config(self, config: Path or dict):
 
@@ -321,7 +356,7 @@ class PoreMongo:
             pool = mp.Pool()
             for i, batch in enumerate(chunks):
                 pool.apply_async(
-                    _insert_doc,
+                    _insert_docs,
                     args=(batch, self.uri, i, scan_file, ),
                     callback=cbk
                 )   # Only static methods work, out-sourced functions to utils
@@ -344,14 +379,13 @@ class PoreMongo:
                     file_path,
                     scan_file=scan_file,
                     to_mongo=False,
-                    model=Fast5
                 )
                 batch.append(m)
 
                 # At each batch size save batch to collection and clear batch
                 if len(batch) == batch_size:
                     total = self._save_batch(
-                        batch, batch_number, total, model=Fast5
+                        batch, batch_number, total
                     )
                     batch = []
                     batch_number += 1
@@ -359,7 +393,7 @@ class PoreMongo:
             # Save last batch
             if batch:
                 self._save_batch(
-                    batch, batch_number, total, model=Fast5,
+                    batch, batch_number, total
                 )
 
     def _save_batch(
@@ -367,15 +401,14 @@ class PoreMongo:
         batch,
         batch_number,
         total,
-        model=Fast5
     ):
 
-        model.objects.insert(batch)
+        Fast5.objects.insert(batch)
         total += len(batch)
 
         self.logger.info(
-            f'Inserted {len(batch)} documents '
-            f'(batch: {batch_number}, total: {total})'
+            f'Inserted {len(batch)} documents (batch: {batch_number}, '
+            f'total: {total})'
         )
 
         return total
@@ -403,6 +436,9 @@ class PoreMongo:
         if isinstance(tags, str):
             tags = (tags,)
 
+        if isinstance(path_query, Path):
+            path_query = str(path_query)
+
         self.logger.info(f'Updating tags to: {", ".join(tags)}')
 
         objects = self.query(
@@ -412,7 +448,8 @@ class PoreMongo:
             name_query=name_query,
             tag_query=tag_query,
             recursive=recursive,
-            not_in=not_in)
+            not_in=not_in
+        )
 
         if remove:
             objects.update(pull_all__tags=tags)
@@ -424,7 +461,7 @@ class PoreMongo:
     ##########################
 
     @staticmethod
-    def display_tags(self, limit: int = 100):
+    def display_tags(limit: int = 100):
 
         pipe = [
             {"$match": {"tags": {"$not": {"$size": 0}}}},
@@ -443,6 +480,172 @@ class PoreMongo:
             print(
              f"{x['_id']:<10} = {x['count']:>10}"
             )
+
+    ##########################
+    #     DB Queries         #
+    ##########################
+
+    def query(
+        self,
+        raw_query: dict = None,
+        path_query: str or list = None,
+        tag_query: str or list = None,
+        name_query: str or list = None,
+        query_logic: str = "AND",
+        abspath: bool = False,
+        recursive: bool = True,
+        not_in: bool = False,
+        model: Fast5 or Read or Sequence = Fast5,
+    ):
+
+        """ API for querying file models using logic chains
+
+        ... on raw or restricted path, tag or name queries. MongoEngine queries
+        (Q) are chained by bitwise operator logic (query_logic).
+
+        Path, tag and name queries can also be chained with each other
+        if at least two parameters given (all same operator: query_logic).
+
+        TODO: not in for tag_query
+
+        """
+
+        # TODO implement nested lists as query objects and nested logic chains?
+
+        if raw_query:
+            return model.objects(__raw__=raw_query)
+
+        if isinstance(path_query, str):
+            path_query = [path_query, ]
+        if isinstance(tag_query, str):
+            tag_query = [tag_query, ]
+        if isinstance(name_query, str):
+            name_query = [name_query, ]
+
+        # Path filter should ask for absolute path by default:
+        if abspath and path_query:
+            path_query = [
+                os.path.abspath(pq) for pq in path_query
+            ]
+
+        # Path filter for selection:
+        if path_query:
+            path_queries = self.get_path_query(
+                path_query, recursive, not_in
+            )
+        else:
+            path_queries = list()
+
+        if name_query:
+            name_queries = self.get_name_query(
+                name_query, not_in
+            )
+        else:
+            name_queries = list()
+
+        if tag_query:
+            tag_queries = self.get_tag_query(
+                tag_query, not_in
+            )
+        else:
+            tag_queries = list()
+
+        queries = path_queries + name_queries + tag_queries
+
+        if not queries:
+            # If there are no queries, return all models:
+            return model.objects
+
+        # Chain all queries (within and between queries)
+        # with the same bitwise operator | or &
+
+        query = self.chain_logic(queries, query_logic)
+
+        return model.objects(query)
+
+    @staticmethod
+    def get_tag_query(tag_query, not_in):
+
+        if not_in:
+            return []  # TODO
+        else:
+            return [
+                Q(tags=tq) for tq in tag_query
+            ]
+
+    @staticmethod
+    def get_name_query(name_query, not_in):
+
+        if not_in:
+            return [
+                Q(__raw__={
+                    "name": {'$regex': '^((?!{string}).)*$'.format(string=nq)}
+                }) for nq in name_query]  # case sensitive regex (not contains)
+        else:
+            return [
+                Q(name__contains=nq) for nq in name_query
+            ]
+
+    # TODO: Abspath - on Windows, UNIX
+
+    @staticmethod
+    def get_path_query(path_query, recursive, not_in):
+
+        if recursive:
+            if not_in:
+                return [Q(__raw__={
+                    "path": {'$regex': '^((?!{string}).)*$'.format(string=pq)}
+                }) for pq in path_query]  # case sensitive regex (not contains)
+            else:
+                return [
+                    Q(path__contains=pq) for pq in path_query
+                ]
+        else:
+            return [
+                Q(dir__exact=pq) for pq in path_query
+            ]
+
+    @staticmethod
+    def chain_logic(iterable, logic):
+        if logic in ("OR", "or", "|"):
+            chained = reduce(or_, iterable)
+        elif logic in ("AND", "and", "&"):
+            chained = reduce(and_, iterable)
+        else:
+            raise ValueError(
+                "Logic parameter must be one of (AND, and, &) or (OR, or, |)"
+            )
+
+        return chained
+
+    def filter(
+        self,
+        queryset,
+        limit: int = None,
+        shuffle: bool = False,
+        unique: bool = True,
+        length: int = None
+    ) -> list:
+
+        """ Filter where query sets are now living in memory """
+
+        query_results = list(queryset)  # Lives happily ever after in memory.
+
+        if unique:
+            self.logger.info('Take the set of query results.')
+            query_results = list(
+                set(query_results)
+            )
+
+        if shuffle:
+            self.logger.info('Shuffle query results.')
+            query_results = random.shuffle(query_results)
+
+        if limit:
+            self.logger.info(f'Take the first {limit} query results.')
+            query_results = query_results[:limit]
+
+        return query_results
 
     #########################
     #   Cleaning DB + QC    #
@@ -525,61 +728,31 @@ class PoreMongo:
         averaging-basecall-quality-scores-the-right-way/
         """
 
-        return -10 * math.log(sum([10 ** (q / -10) for q in quals]) / len(quals), 10)
+        return -10 * math.log(sum(
+            [10 ** (q / -10) for q in quals]
+        ) / len(quals), 10)
 
     # SELECTION AND MAPPING METHODS
 
-    def watch(
-        self,
-        path,
-        callback=None,
-        recursive=False,
-        regexes=(".*\.fastq$",),
-        **kwargs
-    ):
-
-        """Pomoxis async watchdog to index path for .fast5
-        files, apply callback function to filepath on event detection.
-
-        :param path:
-        :param callback:
-        :param index:
-        :param recursive:
-        :param sleep:
-        :return:
-        """
-
-        if callback is None:
-            callback = self.callback_upsert
-
-        fw = FileWatcher()
-
-        try:
-            fw.watch_path(
-                path=path,
-                callback=callback,
-                recursive=recursive,
-                regexes=regexes,
-                **kwargs,
-            )
-        except KeyboardInterrupt:
-            self.logger.info('Path watcher interrupted by user. Exiting.')
-            exit(1)
-        except SystemError:
-            self.logger.info('Path watcher interrupted by system. Exiting.')
-            exit(1)
-
-    def callback_upsert(self, fpath):
+    def callback_insert(self, fpath):
         """Callback for upsert of newly detected .fast5 file
         into database as Fast5 model.
 
         :param fpath:
         :return:
+
         """
         fast5 = _get_doc(fpath, scan_file=True)
-        print(f"Fast5: {time.time()} name={str(fast5.name)}")
+        self.logger.info(f'Insert Fast5 model: {fast5.uuid}')
+        Fast5.objects.insert(fast5)
 
-    def schedule_run(self, fast5, outdir="run_sim_1", scale=1.0, timeout=None):
+    def schedule_run(
+        self,
+        fast5,
+        outdir="run_sim_1",
+        scale=1.0,
+        timeout=None
+    ):
         """Schedule a run extracted from sorted completion times
         for reads contained in Fast5 models. Scale adjusts the
         time intervals between reads. Use with group_runs to
@@ -588,34 +761,46 @@ class PoreMongo:
         Based on taeper - Michael Hall - https://github.com/mhall88/taeper
 
         :param fast5:
-        :param sort:
         :param scale:
         :param outdir:
         :param timeout:
-        :return:
         """
-        # WIll double copy of Fast5 for 2d reads as of now TODO
+        # Will double copy of Fast5 for 2D reads as of now TODO
         reads = [(read, f5) for f5 in fast5 for read in f5.reads]
-        # Sort by ascending read completeion times first
-        reads = sorted(reads, key=lambda x: x[0].end_time, reverse=False)
+
+        # Sort by ascending read completion times first
+        reads = sorted(
+            reads, key=lambda x: x[0].end_time, reverse=False
+        )
 
         read_end_times = [read[0].end_time for read in reads]
+
         # Compute difference between completion of reads
-        time_delta = [0] + [delta/scale for delta in self._delta(read_end_times)]
+        time_delta = [0] + [
+            delta/scale for delta in self._delta(read_end_times)
+        ]
 
         scheduler = BackgroundScheduler()
         start = time.time()  # For callback
         run = datetime.now()  # For scheduler
         for i, delay in enumerate(time_delta):
             run += timedelta(seconds=delay)
-            scheduler.add_job(self.copy_read, 'date', run_date=run,
-                              kwargs={'read': reads[i][0], 'start': start,
-                                      'fast5': reads[i][1], 'outdir': outdir})
+            scheduler.add_job(
+                self.copy_read, 'date',
+                run_date=run,
+                kwargs={
+                    'read': reads[i][0],
+                    'start': start,
+                    'fast5': reads[i][1],
+                    'outdir': outdir
+                }
+            )
         scheduler.start()
         if not timeout:
             print(f"Press Ctrl+{'Break' if os.name == 'nt' else 'C'} to exit")
             try:
-                # Simulate application activity (which keeps the main thread alive).
+                # Simulate application activity
+                # which keeps the main thread alive
                 while True:
                     time.sleep(2)
             except (KeyboardInterrupt, SystemExit):
@@ -649,26 +834,50 @@ class PoreMongo:
     @staticmethod
     def group_runs(fast5):
 
-        pipeline = [{"$group": {"_id": "$exp_start_time",
-                                "fast5": {"$push": "$_id"}}}]
-        run_groups = list(fast5.aggregate(*pipeline, allowDiskUse=True))
+        pipeline = [
+            {
+                "$group": {
+                    "_id": "$exp_start_time",
+                    "fast5": {"$push": "$_id"}
+                }
+            }
+        ]
+        run_groups = list(
+            fast5.aggregate(*pipeline, allowDiskUse=True)
+        )
 
         runs = {}
+
         for run in run_groups:
-            timestamp = int(run["_id"])
-            entry = {"run": datetime.fromtimestamp(timestamp),
-                     "fast5": run["fast5"]}
+            timestamp = int(
+                run["_id"]
+            )
+            entry = {
+                "run": datetime.fromtimestamp(timestamp),
+                "fast5": run["fast5"]
+            }
             runs[timestamp] = entry
+
         print(f"Extracted {len(runs)} {'run' if len(runs) == 1 else 'runs'}.")
 
         return runs
 
-    @staticmethod
-    def sample(file_objects, limit=3, tags=None, proportion=None, unique=False, include_tags=None,
-               exclude_name=None, return_documents=True):
+    def sample(
+       self,
+       file_objects,
+       limit=10,
+       tags=None,
+       proportion=None,
+       unique=False,
+       include_tags=None,
+       exclude_name=None,
+       return_documents=True
+    ):
 
-        """ Add query to a queryset (file_objects) to sample a limited number of file objects;
-        these can be sampled proportionally by tags. """
+        """ Add query to a queryset (file_objects)
+        to sample a limited number of file objects;
+        these can be sampled proportionally by tags.
+        """
 
         if isinstance(tags, str):
             tags = [tags]
@@ -677,43 +886,63 @@ class PoreMongo:
             include_tags = [include_tags]
 
         if tags:
-
             if exclude_name:
-                query_pipeline = [{"$match": {"name": {"$nin": exclude_name}}}]
+                query_pipeline = [
+                    {"$match": {"name": {"$nin": exclude_name}}}
+                ]
             else:
                 query_pipeline = []
 
             if include_tags:
-                query_pipeline += [{"$match": {"tags": {"$all": include_tags}}}]
+                query_pipeline += [
+                    {"$match": {"tags": {"$all": include_tags}}}
+                ]
 
             # Random sample across given tags:
             if not proportion:
-                print(f"Tags specified, but no proportions, sample {limit} Fast5 from all (&) tags: {tags}")
+                self.logger.info(
+                    f"Tags specified, but no proportions, "
+                    f"sample {limit} Fast5 from all (&) tags: {tags}"
+                )
                 query_pipeline += [
                     {"$match": {"tags": {"$all": tags}}},
                     {"$sample": {"size": limit}}
                 ]
-                results = list(file_objects.aggregate(*query_pipeline, allowDiskUse=True))
+                results = list(
+                    file_objects.aggregate(*query_pipeline, allowDiskUse=True)
+                )
 
             # Equal size of random sample for each tag:
             elif proportion == "equal":
-                print(f"Tags specified, equal proportions, sample {int(limit/len(tags))} Fast5 for each tag: {tags}")
+                self.logger.info(
+                    f"Tags specified, equal proportions, "
+                    f"sample {int(limit/len(tags))} Fast5 "
+                    f"for each tag: {tags}"
+                )
                 results = []
                 for tag in tags:
                     query_pipeline += [
                         {"$match": {"tags": {"$in": [tag]}}},
                         {"$sample": {"size": int(limit/len(tags))}}
                     ]
-                    results += list(file_objects.aggregate(*query_pipeline, allowDiskUse=True))
+                    results += list(
+                        file_objects.aggregate(
+                            *query_pipeline, allowDiskUse=True
+                        )
+                    )
             else:
 
                 if not len(proportion) == len(tags):
-                    raise ValueError("List of proportions must be the same length as list of tags.")
+                    raise ValueError(
+                        "List of proportions must be the same"
+                        " length as list of tags."
+                    )
                 if not sum(proportion) == 1:
                     raise ValueError("List of proportions must sum to 1.")
 
-                print(f"Tags specified, list of proportions, sample tags -- "
-                      f"{', '.join([': '.join([tag, str(int(prop*limit))]) for tag, prop in zip(tags, proportion)])}")
+                self.logger.info(
+                    f"Tags specified, list of proportions, sample tags."
+                )
 
                 results = []
                 for i in range(len(tags)):
@@ -722,15 +951,26 @@ class PoreMongo:
                         {"$match": {"tags": {"$in": [tags[i]]}}},
                         {"$sample": {"size": lim}}
                     ]
-                    results += list(file_objects.aggregate(*query_pipeline, allowDiskUse=True))
+                    results += list(
+                        file_objects.aggregate(
+                            *query_pipeline, allowDiskUse=True
+                        )
+                    )
 
         else:
-            print(f"No tags specified, sample {limit} files over given file objects")
+            self.logger.info(
+                f"No tags specified, sample {limit} files"
+                f" over given file objects"
+            )
             query_pipeline = [
                 {"$sample": {"size": limit}}
             ]
 
-            results = list(file_objects.aggregate(*query_pipeline, allowDiskUse=True))
+            results = list(
+                file_objects.aggregate(
+                    *query_pipeline, allowDiskUse=True
+                )
+            )
 
         if unique:
             results = list(set(results))
@@ -740,46 +980,81 @@ class PoreMongo:
 
         return results
 
-    @staticmethod
-    def to_csv(file_objects, out_file, labels=None, sep=","):
+    def paths_to_csv(self, file_objects, out_file, labels=None, sep=","):
 
-        print(f"Writing file paths of Fast5 documents to {out_file}.")
+        self.logger.info(
+            f"Writing file paths of Fast5 documents to {out_file}."
+        )
 
         data = {"paths": [obj.path for obj in file_objects]}
 
         if labels:
             data.update({"labels": labels})
 
-        pandas.DataFrame(data).to_csv(out_file, header=None, index=None, sep=sep)
+        pandas.DataFrame(data).to_csv(
+            out_file, header=None, index=None, sep=sep
+        )
 
-    def copy(self, file_objects, outdir, exist_ok=True, symlink=False, iterate=False,
-             ncpu=1, chunk_size=100, prefixes=None):
+    def copy(
+        self,
+        file_objects,
+        outdir,
+        exist_ok: bool = True,
+        symlink: bool = False,
+        iterate: bool = False,
+        ncpu: int = 1,
+        chunk_size: int = 100,
+        prefixes=None
+    ):
 
-        """ Copy or symlink into output directory, use either generator (memory efficient, ncpu = 1) or
-        list for memory dependent progbar (ncpu = 1) or multi-processing (speedup, ncpu > 1)"""
+        """ Copy or symlink into output directory
 
-        # If files are stored on remote server, copy the files using Paramiko and SCP
+         ... use either generator (memory efficient, ncpu = 1) or
+        list for memory dependent progbar (ncpu = 1) or multi-processing
+        (speedup, ncpu > 1)
+        """
 
-        # Do this as iterator (ncpu = 1, if iterate) or in memory (ncpu > 1, ncpu = 1 if not iterate, has progbar)
+        # If files are stored on remote server,
+        # copy the files using Paramiko and SCP
+
+        # Do this as iterator (ncpu = 1, if iterate)
+        # or in memory (ncpu > 1, ncpu = 1 if not iterate, has progbar)
 
         if ncpu == 1:
 
             os.makedirs(outdir, exist_ok=exist_ok)
 
             if iterate:
-                self.link_files(file_objects, outdir=outdir, pbar=None, symlink=symlink,
-                                scp=self.scp, prefixes=prefixes)
+                self.link_files(
+                    file_objects,
+                    outdir=outdir,
+                    pbar=None,
+                    symlink=symlink,
+                    scp=self.scp,
+                    prefixes=prefixes
+                )
             else:
                 file_objects = list(file_objects)
-                with tqdm.tqdm(total=len(file_objects)) as pbar:
-                    self.link_files(file_objects, outdir=outdir, pbar=pbar, symlink=symlink,
-                                    scp=self.scp, prefixes=prefixes)
+                with tqdm.tqdm(
+                        total=len(file_objects)
+                ) as pbar:
+                    self.link_files(
+                        file_objects,
+                        outdir=outdir,
+                        pbar=pbar,
+                        symlink=symlink,
+                        scp=self.scp,
+                        prefixes=prefixes
+                    )
         else:
 
             if self.scp:
-                raise ValueError("You are trying to call the copy method with multiprocessing options, "
-                                 "while connected to remote server via SHH. This is currently not "
-                                 "supported by PoreMongo.")
+                raise ValueError(
+                    "You are trying to call the copy method with "
+                    "multiprocessing options, while connected to "
+                    "remote server via SHH. This is currently not "
+                    "supported by PoreMongo."
+                )
 
             os.makedirs(outdir, exist_ok=exist_ok)
 
@@ -794,14 +1069,27 @@ class PoreMongo:
             else:
                 prefix_chunks = [None for _ in range(nb_chunks)]
 
-            print(f"Linking file chunks across processors (number of chunks = {nb_chunks}, ncpu = {ncpu})...")
+            self.logger.info(
+                f"Linking file chunks across processors "
+                f"(number of chunks = {nb_chunks}, ncpu = {ncpu})..."
+            )
 
             # Does not work for multiprocessing
 
             pool = mp.Pool(processes=ncpu)
             for i in range(nb_chunks):
-                pool.apply_async(self.link_files, args=(file_object_chunks[i], outdir, None,
-                                                        symlink, self.scp, prefix_chunks[i]))
+                pool.apply_async(
+                    self.link_files,
+                    args=(
+                        file_object_chunks[i],
+                        outdir,
+                        None,
+                        symlink,
+                        self.scp,
+                        prefix_chunks[i]
+                    )
+                )
+
             pool.close()
             pool.join()
 
@@ -812,7 +1100,14 @@ class PoreMongo:
         return [seq[pos:pos + size] for pos in range(0, len(seq), size)]
 
     @staticmethod
-    def link_files(file_objects, outdir: str, symlink: bool = False, pbar=None, scp=None, prefixes=None):
+    def link_files(
+        file_objects,
+        outdir: str,
+        symlink: bool = False,
+        pbar=None,
+        scp=None,
+        prefixes=None
+    ):
 
         for i, obj in enumerate(file_objects):
 
@@ -848,12 +1143,21 @@ class PoreMongo:
             if pbar:
                 pbar.update(1)
 
+    # Small helpers
+
+    def decompose_uri(self):
+
+        if "localhost" not in self.uri:
+            user_split = self.uri.replace("mongodb://", "").split("@")
+            return "mongodb://" + user_split.pop(0).split(":")[0] + \
+                   "@" + "@".join(user_split)
+        else:
+            return self.uri
 
     def files_from_cache(self):
 
-        # Cache is run summary file:
-
-        # Cache is generated when doing a path search:
+        # Cache is run summary file or index of file paths
+        # Cache can be generated when doing a path search for indexing Fast5
 
         pass
 
@@ -873,12 +1177,28 @@ class PoreMongo:
                     if file.endswith(extension):
                         yield os.path.abspath(os.path.join(p, file))
 
+    @deprecated(
+        deprecated_in="0.4",
+        removed_in="1.0",
+        current_version=VERSION,
+        details="Comment field removed from Fast5 models"
+    )
+    def comment(
+        self,
+        comments,
+        path_query=None,
+        name_query=None,
+        tag_query=None,
+        remove=False,
+        recursive=True
+    ):
 
-    def comment(self, comments, path_query=None, name_query=None, tag_query=None, remove=False, recursive=True):
+        """ Add comments to all files with extension tag_path
+        if and only if they are already indexed in the DB.
 
-        """ Add comments to all files with extension tag_path if and only if they are already indexed in the DB.
-        Default recursive (for all Fast5 where tag_path in file_path) or optional non-recursive search
-        (for all Fast5 where tag_path is parent_path) and printing summary.
+        Default recursive (for all Fast5 where tag_path in file_path)
+        or optional non-recursive search (for all Fast5 where tag_path
+         is parent_path) and printing summary.
 
         :param comments:
         :param path_query:
@@ -898,8 +1218,10 @@ class PoreMongo:
                 comments = (comments,)
 
         if not self._one_active_param(path_query, name_query, tag_query):
-            raise ValueError("Tags can only be attached by one (str) "
-                             "or multiple (list) attributes of either: path, name or tag")
+            raise ValueError(
+                "Tags can only be attached by one (str) "
+                "or multiple (list) attributes of either: path, name or tag"
+            )
 
         objects = self.query(model=Fast5, path_query=path_query, name_query=name_query,
                              tag_query=tag_query, recursive=recursive)
@@ -910,138 +1232,18 @@ class PoreMongo:
             objects.update(add_to_set__comments=comments)
 
     @staticmethod
+    @deprecated(
+        deprecated_in="0.4",
+        removed_in="1.0",
+        current_version=VERSION,
+        details="Comment field removed from Fast5 models"
+    )
     def _one_active_param(path_query, name_query, tag_query):
 
-        return sum([True for param in [path_query, name_query, tag_query] if param is not None]) == 1
-
-    # DB METHODS
-
-    @staticmethod
-    def filter(queryset, limit: int = None, shuffle: bool = False, unique: bool = True, length: int = None):
-
-        """ Filter where query sets are now living in memory """
-
-        query_results = list(queryset)  # Lives happily ever after in memory.
-
-        if unique:
-            query_results = list(set(query_results))
-
-        if shuffle:
-            random.shuffle(query_results)
-
-        if limit:
-            query_results = query_results[:limit]
-
-        return query_results
-
-    def query(self, raw_query=None, path_query: str or list = None, tag_query: str or list = None,
-              name_query: str or list = None, query_logic: str = "AND", model: Fast5 or Read or Sequence=Fast5,
-              abspath: bool = False, recursive: bool = True, not_in: bool = False):
-
-        """ API for querying file models using logic chains on path, tag or name queries. MongoEngine queries to path,
-        tag and names (Q) are chained by bitwise operator logic (query_logic) and path, tag and name queries can
-        be also be chained with each other if at least two parameters given (all same operator for now = query_logic).
-
-        Single queries can also use the context_manager methods on the Fast5 model class in a connected DB,
-        i.e. Fast5.query_name(name="test"), Fast5.query_path(path="test_path"), Fast5.query_tags(tags="tag_1").
-        """
-
-        # TODO implement nested lists as query objects and nested logic chains?
-
-        if raw_query:
-            return model.objects(__raw__=raw_query)
-
-        if isinstance(path_query, str):
-            path_query = [path_query, ]
-        if isinstance(tag_query, str):
-            tag_query = [tag_query, ]
-        if isinstance(name_query, str):
-            name_query = [name_query, ]
-
-        # Path filter should ask for absolute path by default:
-        if abspath and path_query:
-            path_query = [os.path.abspath(pq) for pq in path_query]
-
-        # Path filter for selection:
-        if path_query:
-            path_queries = self.get_path_query(path_query, recursive, not_in)
-        else:
-            path_queries = list()
-
-        if name_query:
-            name_queries = self.get_name_query(name_query, not_in)
-        else:
-            name_queries = list()
-
-        if tag_query:
-            tag_queries = self.get_tag_query(tag_query, not_in)
-        else:
-            tag_queries = list()
-
-        queries = path_queries + name_queries + tag_queries
-
-        if not queries:
-            # If there are no queries, return all models:
-            return model.objects
-
-        # Chain all queries (within and between queries) with the same bitwise operator | or &
-        query = self.chain_logic(queries, query_logic)
-
-        return model.objects(query)
-
-    @staticmethod
-    def get_tag_query(tag_query, not_in):
-
-        if not_in:
-            return []  # TODO
-        else:
-            return [Q(tags=tq) for tq in tag_query]
-
-    @staticmethod
-    def get_name_query(name_query, not_in):
-
-        if not_in:
-            return [Q(__raw__={"name": {'$regex': '^((?!{string}).)*$'.format(string=nq)}})
-                    for nq in name_query]  # case sensitive regex (not contains)
-        else:
-            return [Q(name__contains=nq) for nq in name_query]
-
-    # TODO: Abspath - on Windows, UNIX
-
-    @staticmethod
-    def get_path_query(path_query, recursive, not_in):
-
-        if recursive:
-            if not_in:
-                return [Q(__raw__={"path": {'$regex': '^((?!{string}).)*$'.format(string=pq)}})
-                        for pq in path_query]  # case sensitive regex (not contains)
-            else:
-                return [Q(path__contains=pq) for pq in path_query]
-        else:
-            return [Q(dir__exact=pq) for pq in path_query]
-
-    @staticmethod
-    def chain_logic(iterable, logic):
-        if logic in ("OR", "or", "|"):
-            chained = reduce(or_, iterable)
-        elif logic in ("AND", "and", "&"):
-            chained = reduce(and_, iterable)
-        else:
-            raise ValueError("Logic parameter must be one of (AND, and, &) or (OR, or, |).")
-
-        return chained
-
-    # Small helpers
-
-
-    def decompose_uri(self):
-
-        if "localhost" not in self.uri:
-            user_split = self.uri.replace("mongodb://", "").split("@")
-            return "mongodb://" + user_split.pop(0).split(":")[0] + \
-                   "@" + "@".join(user_split)
-        else:
-            return self.uri
+        return sum(
+            [True for param in [path_query, name_query, tag_query]
+                if param is not None]
+        ) == 1
 
 
 

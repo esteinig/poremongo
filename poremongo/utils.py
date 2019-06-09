@@ -1,5 +1,6 @@
 import os
 import sys
+import uuid
 import shlex
 import subprocess
 import pymongo
@@ -8,7 +9,7 @@ from pathlib import Path
 from poremongo.models import Fast5
 
 
-def run_cmd(cmd, callback=None, watch=False):
+def run_cmd(cmd, callback=None, watch=False, shell=False):
 
     """Runs the given command and gathers the output.
 
@@ -32,8 +33,18 @@ def run_cmd(cmd, callback=None, watch=False):
 
     output = None
     try:
-        proc = subprocess.Popen(shlex.split(cmd), stdout=subprocess.PIPE)
-
+        if shell:
+            return subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                shell=True,
+                preexec_fn=os.setsid
+            )
+        else:
+            proc = subprocess.Popen(
+                shlex.split(cmd),
+                stdout=subprocess.PIPE
+            )
         if watch:
             while proc.poll() is None:
                 line = proc.stdout.readline()
@@ -59,9 +70,9 @@ def run_cmd(cmd, callback=None, watch=False):
 
 # Multiprocessing static functions for apply_async
 
-def _insert_doc(
-        chunk, uri, i=1, scan_file=True
-    ):
+def _insert_docs(
+    chunk, uri, i=1, scan_file=True
+):
 
     """
     For multiprocessing use MongoClient directly to spawn
@@ -76,7 +87,7 @@ def _insert_doc(
 
     batch = [
         _get_doc(
-            file_path, scan_file=scan_file, to_mongo=True, model=Fast5
+            file_path, scan_file=scan_file, to_mongo=True,
         )
         for file_path in chunk
     ]
@@ -90,7 +101,7 @@ def _insert_doc(
     return len(chunk), i  # Returns number of Fast5, index of batch
 
 
-def _get_doc(file_path, scan_file=True, to_mongo=False, model=Fast5):
+def _get_doc(file_path, scan_file=True, to_mongo=False):
 
     """ Construct Fast5 document for MongoDB
 
@@ -99,9 +110,21 @@ def _get_doc(file_path, scan_file=True, to_mongo=False, model=Fast5):
 
     """
 
-    fname = os.path.basename(file_path)
-    fast5 = model(
-        name=fname, path=file_path, dir=os.path.dirname(file_path)
+    path = Path(file_path)
+
+    fast5 = Fast5(
+        path=str(
+            path.absolute()
+        ),
+        dir=str(
+            path.parent
+        ),
+        name=str(
+            path.name
+        ),
+        uuid=str(
+            uuid.uuid4()
+        )
     )
 
     if scan_file:

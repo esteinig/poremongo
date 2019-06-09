@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 
 from mongoengine import *
@@ -10,6 +11,18 @@ from ont_fast5_api.fast5_file import Fast5File
 from datetime import datetime
 
 # TODO: Paramiko Timeout
+
+
+def timestamp_to_epoch(timestamp: float) -> float:
+    """Auxiliary function to parse timestamp into epoch time."""
+
+    epoch = datetime(1970, 1, 1)
+    time_as_date = datetime.fromtimestamp(timestamp)
+    return (time_as_date - epoch).total_seconds()
+
+
+def epoch_to_timestamp(epoch_seconds: float) -> str:
+    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(epoch_seconds))
 
 
 class Sequence(EmbeddedDocument):
@@ -36,7 +49,7 @@ class Read(EmbeddedDocument):
     start_time = FloatField()
     duration = IntField()
 
-    digi = FloatField()
+    digitisation = FloatField()
     range = FloatField()
     offset = FloatField()
 
@@ -52,9 +65,10 @@ class Read(EmbeddedDocument):
 class Fast5(Document):
 
     _id = ObjectIdField()
+    uuid = StringField(required=False, unique=True)
 
-    # File Info
-    # Change unique here to induce break in insertion of the same files
+    # File Info - Change unique here to induce break
+    # in insertion of the same files
     path = StringField(required=True, unique=False)
     name = StringField(required=True)
     dir = StringField(required=False)
@@ -79,7 +93,7 @@ class Fast5(Document):
     # Meta
     meta = {"collection": "fast5"}
 
-    is_copy = False
+    is_copy: bool = False
 
     # Single query API for Fast5
 
@@ -113,12 +127,16 @@ class Fast5(Document):
             if self.is_copy:
                 os.remove(self.path)
             else:
-                raise ValueError("Model path must have been modified by self.get - otherwise this risks"
-                                 "deleting the master copy of this Fast5 in local storage.")
+                raise ValueError(
+                    "Model path must have been modified by self.get - "
+                    "otherwise this risks deleting the master copy "
+                    "of this Fast5 in local storage."
+                )
         except OSError:
             pass
 
     def scan_file(self, update=True):
+
         """ Scans Fast5 files for data to exract into model"""
 
         info = Fast5Info(self.path)
@@ -166,16 +184,22 @@ class Fast5(Document):
         for attr in info.read_info:
             channel_info = fast5.handle['UniqueGlobalKey/channel_id'].attrs
 
-            read = Read(id=attr.read_id,
-                        number=attr.read_number,
-                        duration=int(attr.duration),
-                        channel=int(info.channel),
-                        start_time=int(attr.start_time),
-                        end_time=self.calculate_timestamp(int(attr.start_time), int(attr.duration),
-                                                          exp_start_time, sampling_rate),
-                        digi=channel_info['digitisation'],
-                        range=channel_info['range'],
-                        offset=channel_info['offset'])
+            read = Read(
+                id=attr.read_id,
+                number=attr.read_number,
+                duration=int(attr.duration),
+                channel=int(info.channel),
+                start_time=int(attr.start_time),
+                end_time=self.calculate_timestamp(
+                    int(attr.start_time),
+                    int(attr.duration),
+                    exp_start_time,
+                    sampling_rate
+                ),
+                digitisation=channel_info['digitisation'],
+                range=channel_info['range'],
+                offset=channel_info['offset']
+            )
 
             if update:
                 self.update(add_to_set__reads=read)
@@ -193,12 +217,19 @@ class Fast5(Document):
         except ValueError:
             pass
         try:
-            exp_start_time = float(datetime.strptime(exp_start_time, "%Y-%m-%dT%H:%M:%SZ").timestamp())
+            exp_start_time = float(
+                datetime.strptime(
+                    exp_start_time, "%Y-%m-%dT%H:%M:%SZ"
+                ).timestamp()
+            )
         except TypeError:
             pass
 
-        exp_start_time = self._timestamp_to_epoch_time(exp_start_time)
-        sampling_rate = float(fast5.get_channel_info().get('sampling_rate'))
+        exp_start_time = timestamp_to_epoch(exp_start_time)
+
+        sampling_rate = float(
+            fast5.get_channel_info().get('sampling_rate')
+        )
 
         return exp_start_time, sampling_rate
 
@@ -207,13 +238,11 @@ class Fast5(Document):
         window_size: int = None,
         window_step: int = None,
         scale: bool = False,
-        template: bool = True,
-        return_all: bool = True
+        template: bool = True
     ) -> np.array:
 
         """ Scaled pA values (float32) or raw DAQ values (int16),
-        return first read (1D) or if all_reads = True return
-        array of all reads """
+        return array of length 1 (1D) or array of length 2 (2D) """
 
         if template:
             reads = np.array(
@@ -237,25 +266,16 @@ class Fast5(Document):
                 ) for read in reads]
             )
 
-        if return_all:
-            return reads
-        else:
-            if len(reads) > 0:
-                return reads[0]
-            else:
-                raise ValueError("No reads in array.")
+        if not reads:
+            raise ValueError('No reads in array.')
 
-    @staticmethod
-    def _timestamp_to_epoch_time(timestamp: float) -> float:
-        """Auxiliary function to parse timestamp into epoch time."""
-        epoch = datetime(1970, 1, 1)
-        time_as_date = datetime.fromtimestamp(timestamp)
-        return (time_as_date - epoch).total_seconds()
+        return reads
 
     @staticmethod
     def calculate_timestamp(
             read_start_time, read_duration, exp_start_time, sampling_rate
     ) -> float:
+
         """Calculates the epoch time when the read finished sequencing.
         :param read_start_time:
         :param read_duration:
@@ -271,5 +291,21 @@ class Fast5(Document):
         finish = sample_length / sampling_rate
 
         return experiment_start + finish
+
+    def to_row(self, sep: str = '\t'):
+
+        print(
+            self.uuid, sep,
+            str(self.read_number)+'D', sep,
+            ' '.join(self.tags), sep,
+            f' '.join([str(r.number) for r in self.reads]), sep,
+            epoch_to_timestamp(self.exp_start_time)
+        )
+        #
+        # return f"{str(self.uuid)}{sep}{str(self.read_number)}D{sep}" \
+        #     f"{sep}{':'.join(self.tags)}{sep}" \
+        #     f"{f'{sep}'.join([r.number for r in self.reads])}{sep}"\
+        #     f"{epoch_to_timestamp(self.exp_start_time)}{sep}" \
+
 
 

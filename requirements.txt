@@ -11,3 +11,5 @@ scikit-image
 watchdog
 apscheduler
 click
+deprecation
+pyfastaq

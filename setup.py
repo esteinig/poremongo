@@ -21,11 +21,14 @@ setup(
         'scipy',
         'watchdog',
         'apscheduler',
-        'click'
+        'click',
+        'deprecation',
+        'pyfastaq'
     ],
     entry_points="""
         [console_scripts]
         poremongo=poremongo.terminal.client:terminal_client
+        pm=poremongo.terminal.client:terminal_client
     """,
     version="0.3",
     license="MIT",

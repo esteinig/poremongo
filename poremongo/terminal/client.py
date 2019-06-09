@@ -1,7 +1,9 @@
 import click
 
+from .watch import watch
 from .index import index
-
+from .query import query
+from .drop import drop
 
 VERSION = '0.3'
 
@@ -14,3 +16,6 @@ def terminal_client():
 
 
 terminal_client.add_command(index)
+terminal_client.add_command(watch)
+terminal_client.add_command(query)
+terminal_client.add_command(drop)

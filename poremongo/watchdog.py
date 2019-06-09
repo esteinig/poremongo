@@ -118,6 +118,7 @@ class FileWatcher:
         )
 
         self.ssh = ssh
+        self.watch: Watcher or None = None
 
         self.logger = logging.getLogger(__name__)
 
@@ -126,7 +127,7 @@ class FileWatcher:
         path: Path,
         callback: callable,
         recursive=False,
-        regexes=(".*\.fastq$",),
+        regexes=(".*\.fast5",),
         **kwargs,
     ):
         """ Watch a filepath for new files, applying callback to files
@@ -139,15 +140,24 @@ class FileWatcher:
         """
 
         self.logger.info("Initiate event handler.")
+
         handler = StandardRegexMatchingEventHandler(
             callback=callback, regexes=regexes, **kwargs
         )
 
         self.logger.info("Initiate watchdog event module.")
-        watch = Watcher(str(path), event_handler=handler, recursive=recursive)
+
+        self.watch = Watcher(
+            str(path), event_handler=handler, recursive=recursive
+        )
+
         self.logger.info(f"Walls to watch: {path}")
         self.logger.info(f"Night gathers, and now my watch begins ...")
-        watch.start()
+        self.watch.start()
+
+    def stop_watch(self):
+
+        self.watch.stop()
 
     def callback_transfer(self, fname: str, remote_directory: str):
 

@@ -1,25 +1,29 @@
 import click
+
 from pathlib import Path
-
-from poremongo.poremongo import PoreMongo
-
 from functools import partial
+from poremongo.poremongo import PoreMongo
 
 # Monkey patching to show all default options
 click.option = partial(click.option, show_default=True)
 
+
 @click.command()
 @click.option(
-    '--uri', '-u', type=str, required=True,
+    '--uri', '-u', type=str, default='local',
     help='MongoDB URI, >local< to start a local scratch DB,'
          'or connect via URI: mongodb://user:pwd@address:port/dbname'
+)
+@click.option(
+    '--config', '-c', type=Path, default=None,
+    help='Path to JSON cofnig file for MongoDB connection.'
 )
 @click.option(
     '--tags', '-t', type=str, required=True,
     help='Comma separated string of tags (labels) to attach to Fast5 in DB'
 )
 @click.option(
-    '--fast5', '-f', type=str, required=True,
+    '--fast5', '-f', type=Path, required=True,
     help='Directory containing Fast5.'
 )
 @click.option(
@@ -34,7 +38,13 @@ click.option = partial(click.option, show_default=True)
     '--ncpu', '-n', type=int, default=2,
     help='Number of processors for parallel multi-inserts into DB.'
 )
-def index(uri, fast5, tags, recursive, batch_size, ncpu):
+@click.option(
+    '--mongod', '-m', is_flag=True,
+    help='Start local MongoDB database in background process.'
+)
+def index(uri, config, fast5, tags, recursive, batch_size, ncpu, mongod):
+
+    """ Index a path to Fast5 files and tag documents in the DB. """
 
     if uri == 'local':
         uri = 'mongodb://localhost:27017/poremongo'
@@ -44,12 +54,18 @@ def index(uri, fast5, tags, recursive, batch_size, ncpu):
     if not tags:
         raise ValueError('You must specify tags (labels) for indexing Fast5')
 
-    pongo = PoreMongo(uri=uri)
+    pongo = PoreMongo(
+        config=config if config else dict(),
+        uri=uri if uri else None
+    )
+
+    if pongo.local and mongod:
+        pongo.start_mongodb()
 
     pongo.connect()
 
     pongo.index(
-        index_path=fast5,
+        index_path=fast5.absolute(),
         recursive=recursive,
         scan=True,
         batch_size=batch_size,
@@ -57,8 +73,12 @@ def index(uri, fast5, tags, recursive, batch_size, ncpu):
     )
 
     pongo.tag(
-        path_query=str(fast5),
+        path_query=fast5.absolute(),
         tags=tags,
         recursive=recursive
     )
 
+    pongo.disconnect()
+
+    if pongo.local  and mongod:
+        pongo.terminate_mongodb()
