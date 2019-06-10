@@ -41,7 +41,7 @@ Placeholder
 ### Publications
 ---
 
-We will publish this program as an application note, but will keep an ongoing manuscript on BioRxiv to keep track of changes and features in upcoming versions. If you use `Poremongo` please cite the BioRxiv version for now.
+We will publish this program as an application note, but intend to keep track of changes and features in upcoming versions through an ongoing manuscript on BioRxiv. Until publication, please cite the BioRxiv version if you use `Poremongo`.
 
 Authors:
 
