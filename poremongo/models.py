@@ -29,12 +29,19 @@ class Sequence(EmbeddedDocument):
 
     id = StringField(required=True)
 
+    workflow = StringField(required=True)
+
     basecaller = StringField(required=True)
     version = StringField(required=True)
 
-    path = StringField(unique=False)
-    name = StringField(unique=False)
-    dir = StringField(unique=False)
+
+
+    taxdb = StringField()
+    taxid = IntField()
+
+    path = StringField()
+    name = StringField()
+    dir = StringField()
 
     quality = FloatField()
     length = IntField()
