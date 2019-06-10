@@ -1,4 +1,4 @@
-# Poremongo <a href='https://github.com/esteinig'><img src='docs/img/poremongo.png' align="right" height="210" /></a>
+# Poremongo <a href='https://github.com/esteinig'><img src='docs/img/poremongo.png' align="right" height="245" /></a>
 
 ![](https://img.shields.io/badge/version-0.3a-yellow.svg)
 ![](https://img.shields.io/badge/docs-repo-green.svg)
