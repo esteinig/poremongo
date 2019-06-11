@@ -34,8 +34,6 @@ class Sequence(EmbeddedDocument):
     basecaller = StringField(required=True)
     version = StringField(required=True)
 
-
-
     taxdb = StringField()
     taxid = IntField()
 

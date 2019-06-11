@@ -1223,8 +1223,13 @@ class PoreMongo:
                 "or multiple (list) attributes of either: path, name or tag"
             )
 
-        objects = self.query(model=Fast5, path_query=path_query, name_query=name_query,
-                             tag_query=tag_query, recursive=recursive)
+        objects = self.query(
+            model=Fast5,
+            path_query=path_query,
+            name_query=name_query,
+            tag_query=tag_query,
+            recursive=recursive
+        )
 
         if remove:
             objects.update(pull_all__comments=comments)
