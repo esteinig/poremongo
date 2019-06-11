@@ -1,4 +1,4 @@
-# Poremongo <a href='https://github.com/esteinig'><img src='docs/img/poremongo.png' align="right" height="210" /></a>
+# Poremongo <a href='https://github.com/esteinig'><img src='docs/img/poremongo.png' align="right" height="245" /></a>
 
 ![](https://img.shields.io/badge/version-0.3a-yellow.svg)
 ![](https://img.shields.io/badge/docs-repo-green.svg)
@@ -8,7 +8,6 @@
 ---
 
 Interface for nanopore signal read management in MongoDB.
-
 
 ### Install
 ---
@@ -25,32 +24,36 @@ From PyPI without MongoDB:
 pip install poremongo
 ```
 
+### Example: Command Line Interface
+---
+
+```
+Placeholder
+```
+
 ### Example: Python API
 ---
 
-```python
-from poremongo import PoreMongo
-
-pm = PoreMongo(uri="mongodb://user:pwd@server:port/database")
-pm.connect()
-
-pm.index("path/to/fast5", batch_size=500, ncpu=4)
-pm.tag(path_query="path/to/fast5", tags=("TB", "R9.4", "RUNID_1726"))
-
-pm.display("tags")
-
-fast5 = pm.query(tag_query="TB")
-
-for f5 in fast5:
-  reads = f5.get_reads(template=True)
-  print(f5.path, f5.tags, reads)
-  
-fast5_sampled = pm.sample(fast5, tags="TB", limit=10, proportion=None)
-
-pm.copy(fast5_sampled, outdir="tmp", ncpu=1)
-
-pm.disconnect()
-
+```
+Placeholder
 ```
 
-PoreMongo is under construction.
+### Publications
+---
+
+We will publish this program as an application note, but intend to keep track of changes and features in upcoming versions through an ongoing manuscript on BioRxiv. Until publication, please cite the BioRxiv version if you use `Poremongo`.
+
+Authors:
+
+* Eike Steinig
+* Michael Hall
+* Lachlan Coin
+* Emma McBryde
+
+### Release notes: v0.4-beta
+---
+
+Current version is the feature-incomplete alpha release `v0.3a`. In the feature-complete beta release `v0.4b` the following additional features will be included:
+
+* Vue interface for navigating database collections
+* Database analysis pipelines in Nextflow
