@@ -40,7 +40,8 @@ click.option = partial(click.option, show_default=True)
 )
 @click.option(
     '--mongod', '-m', is_flag=True,
-    help='Start local MongoDB database in background process.'
+    help='Start local MongoDB database in background process '
+         'and terminate after successful indexing.'
 )
 @click.option(
     '--port', default=27017,

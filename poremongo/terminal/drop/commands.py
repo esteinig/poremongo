@@ -16,7 +16,7 @@ click.option = partial(click.option, show_default=True)
 )
 @click.option(
     '--config', '-c', type=Path, default=None,
-    help='Path to JSON cofnig file for MongoDB connection.'
+    help='Path to JSON config file for MongoDB connection.'
 )
 @click.option(
     '--auto', '-a', is_flag=True,
