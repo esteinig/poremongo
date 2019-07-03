@@ -26,12 +26,16 @@ click.option = partial(click.option, show_default=True)
     '--mongod', '-m', is_flag=True,
     help='Start local MongoDB database in background process.'
 )
-def drop(uri, config, auto, mongod):
+@click.option(
+    '--port', '-p', default=27017,
+    help='Port for connecting to localhost MongoDB'
+)
+def drop(uri, config, auto, mongod, port):
 
     """ Drop the database at the given URI """
 
     if uri == 'local':
-        uri = 'mongodb://localhost:27017/poremongo'
+        uri = f'mongodb://localhost:{port}/poremongo'
 
     db = Path(uri).stem
 

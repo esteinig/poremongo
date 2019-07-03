@@ -25,6 +25,43 @@ def epoch_to_timestamp(epoch_seconds: float) -> str:
     return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(epoch_seconds))
 
 
+class TagSettings:
+
+    global_tags = ListField(StringField)
+    sample_prior = IntField(default=20000)
+    sample_proportion = StringField(default='equal')
+    sample_unique = BooleanField(default=False)
+
+
+class WindowSettings(EmbeddedDocument):
+
+    total = IntField()
+    size = IntField()
+    step = FloatField()
+    read = IntField()
+    random = BooleanField(default=True)
+    recover = BooleanField(default=False)
+
+
+class Dataset(Document):
+
+    uuid = StringField()
+
+    name = StringField()
+    path = StringField()
+
+    validation = FloatField()
+
+    window_settings = EmbeddedDocumentListField(
+        document_type=WindowSettings
+    )
+    tag_settings = EmbeddedDocumentListField(
+        document_type=TagSettings
+    )
+
+
+
+
 class Sequence(EmbeddedDocument):
 
     id = StringField(required=True)
@@ -278,7 +315,7 @@ class Fast5(Document):
 
     @staticmethod
     def calculate_timestamp(
-            read_start_time, read_duration, exp_start_time, sampling_rate
+        read_start_time, read_duration, exp_start_time, sampling_rate
     ) -> float:
 
         """Calculates the epoch time when the read finished sequencing.

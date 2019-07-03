@@ -15,16 +15,16 @@ click.option = partial(click.option, show_default=True)
          'or connect via URI: mongodb://user:pwd@address:port/dbname'
 )
 @click.option(
+    '--index_path', '-p', type=Path, required=True,
+    help='Directory containing Fast5.'
+)
+@click.option(
     '--config', '-c', type=Path, default=None,
-    help='Path to JSON cofnig file for MongoDB connection.'
+    help='Path to JSON config file for MongoDB connection.'
 )
 @click.option(
     '--tags', '-t', type=str, required=True,
     help='Comma separated string of tags (labels) to attach to Fast5 in DB'
-)
-@click.option(
-    '--fast5', '-f', type=Path, required=True,
-    help='Directory containing Fast5.'
 )
 @click.option(
     '--recursive', '-r', is_flag=True,
@@ -42,14 +42,21 @@ click.option = partial(click.option, show_default=True)
     '--mongod', '-m', is_flag=True,
     help='Start local MongoDB database in background process.'
 )
-def index(uri, config, fast5, tags, recursive, batch_size, ncpu, mongod):
+@click.option(
+    '--port', default=27017,
+    help='Port for connecting to localhost MongoDB'
+)
+def index(
+    uri, config, index_path, index_file, tags,
+    recursive, batch_size, ncpu, mongod, port
+):
 
     """ Index a path to Fast5 files and tag documents in the DB. """
 
     if uri == 'local':
-        uri = 'mongodb://localhost:27017/poremongo'
+        uri = f'mongodb://localhost:{port}/poremongo'
 
-    tags = tags.split(',')
+    tags = [t.strip() for t in tags.split(',')]
 
     if not tags:
         raise ValueError('You must specify tags (labels) for indexing Fast5')
@@ -65,7 +72,8 @@ def index(uri, config, fast5, tags, recursive, batch_size, ncpu, mongod):
     pongo.connect()
 
     pongo.index(
-        index_path=fast5.absolute(),
+        index_path=index_path,
+        index_file=None,
         recursive=recursive,
         scan=True,
         batch_size=batch_size,
@@ -73,12 +81,12 @@ def index(uri, config, fast5, tags, recursive, batch_size, ncpu, mongod):
     )
 
     pongo.tag(
-        path_query=fast5.absolute(),
+        path_query=index_path,
         tags=tags,
         recursive=recursive
     )
 
     pongo.disconnect()
 
-    if pongo.local  and mongod:
+    if pongo.local and mongod:
         pongo.terminate_mongodb()

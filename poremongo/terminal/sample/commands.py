@@ -50,6 +50,10 @@ click.option = partial(click.option, show_default=True)
     '--mongod', '-m', is_flag=True,
     help='Start local MongoDB database in background process.'
 )
+@click.option(
+    '--port', '-p', default=27017,
+    help='Port for connecting to localhost MongoDB'
+)
 def sample(
     uri,
     config,
@@ -59,13 +63,14 @@ def sample(
     json_out,
     unique,
     display,
-    mongod
+    mongod,
+    port
 ):
 
     """ Query a Fast5 collection with PoreMongo """
 
     if uri == 'local':
-        uri = 'mongodb://localhost:27017/poremongo'
+        uri = f'mongodb://localhost:{port}/poremongo'
 
     pongo = PoreMongo(
         config=config if config else dict(),

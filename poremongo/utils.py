@@ -26,6 +26,7 @@ def run_cmd(cmd, callback=None, watch=False, shell=False):
         RuntimeError: When `index` is True, but no callback is given.
 
     """
+
     if watch and not callback:
         raise RuntimeError(
             'You must provide a callback when watching a process.'

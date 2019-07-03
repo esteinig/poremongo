@@ -20,7 +20,7 @@ click.option = partial(click.option, show_default=True)
 )
 @click.option(
     '--config', '-c', type=Path, default=None,
-    help='Path to JSON cofnig file for MongoDB connection.'
+    help='Path to JSON config file for MongoDB connection.'
 )
 @click.option(
     '--path', '-p', type=Path, required=True,
@@ -34,11 +34,15 @@ click.option = partial(click.option, show_default=True)
     '--mongod', '-m', is_flag=True,
     help='Start local MongoDB database in background process.'
 )
-def watch(uri, config, path, recursive, mongod):
+@click.option(
+    '--port', '-p', default=27017,
+    help='Port for connecting to localhost MongoDB'
+)
+def watch(uri, config, path, recursive, mongod, port):
     """ Watch a directory for incoming Fast5 and upsert to DB """
 
     if uri == 'local':
-        uri = 'mongodb://localhost:27017/poremongo'
+        uri = f'mongodb://localhost:{port}/poremongo'
 
     pongo = PoreMongo(
         config=config if config else dict(),

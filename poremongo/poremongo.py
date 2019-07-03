@@ -49,7 +49,8 @@ class PoreMongo:
         config: Path or dict = None,
         connect: bool = False,
         ssh: bool = False,
-        mock: bool = False
+        mock: bool = False,
+        pwd: str = None
     ):
         disallowed = ['local']
         if Path(uri).stem in disallowed:
@@ -75,6 +76,8 @@ class PoreMongo:
         self.scp = None
 
         self.client: pymongo.MongoClient = pymongo.MongoClient(None)
+        self.connected: bool = False
+
         self.db = None  # Client DB
         self.fast5 = None  # Fast5 collection
 
@@ -153,9 +156,17 @@ class PoreMongo:
                 is_mock=is_mock,
                 **kwargs
             )
-        except ServerSelectionTimeoutError:
-            raise
 
+            self.client.server_info()
+
+        except ServerSelectionTimeoutError:
+            self.connected = False
+            self.logger.info(
+                f'Failed to connect to: {self.decompose_uri()}'
+            )
+            return self.connected
+
+        self.connected = True
         self.logger.info(
             f'Success! Connected to: {self.decompose_uri()}'
         )
@@ -176,6 +187,8 @@ class PoreMongo:
             self.logger.info(
                 'Success! Opened SSH and SCP to PoreMongo'
             )
+
+        return self.connected
 
     def disconnect(self, ssh=False):
 
@@ -253,7 +266,8 @@ class PoreMongo:
     # TODO: Config with paths and tags, comments
     def index(
         self,
-        index_path: Path,
+        index_path: Path = None,
+        index_file: Path = None,
         recursive: bool = True,
         scan: bool = True,
         ncpu: int = 2,
@@ -296,17 +310,26 @@ class PoreMongo:
             f'Collecting files, this may take some time...'
         )
 
-        file_paths = self.files_from_path(
-            path=str(index_path),
-            extension=".fast5",
-            recursive=recursive
-        )   # Returns generator!
+        if index_path is None:
+            file_paths = self.files_from_list(
+                path=index_file
+            )
+            self.logger.info(
+                f'Collected {len(file_paths)} Fast5 files from: {index_file}'
+            )
+        else:
+            file_paths = self.files_from_path(
+                path=str(index_path),
+                extension=".fast5",
+                recursive=recursive
+            )   # Returns generator!
 
-        file_paths = list(file_paths)  # Load the list into memory for chunking
+            # Load the list into memory for chunking
+            file_paths = list(file_paths)
 
-        self.logger.info(
-            f'Collected {len(file_paths)} Fast5 files from: {index_path}'
-        )
+            self.logger.info(
+                f'Collected {len(file_paths)} Fast5 files from: {index_path}'
+            )
 
         self._index_fast5(
             file_paths=file_paths,
@@ -461,25 +484,53 @@ class PoreMongo:
     ##########################
 
     @staticmethod
-    def display_tags(limit: int = 100):
+    def get_tag_data(
+        tags: list or None = None,
+        limit: int or None = 100
+    ) -> (list, list):
 
-        pipe = [
-            {"$match": {"tags": {"$not": {"$size": 0}}}},
+        print('Bubble chart data from server:', tags)
+
+        if tags:
+            match = {"$match": {"tags": {"$in": tags}}}
+        else:
+            match = {"$match": {"tags": {"$not": {"$size": 0}}}}
+
+        counts = [
+            match,
             {"$unwind": "$tags"},
-            {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
-            {"$match": {"count": {"$gte": 1}}},
+            {"$group": {
+                    "_id": "$tags",
+                    "latest": {"$last": "$exp_start_time"},
+                    "count": {"$sum": 1}
+            }},
+            {"$match": {
+                    "count": {"$gte": 1}
+            }},
             {"$sort": {"count": -1}},
-            {"$limit": limit}
         ]
 
-        tag_counts = list(
-            Fast5.objects.aggregate(*pipe)
-        )
+        timeline = [
+            match,
+            {"$unwind": "$exp_start_time"},
+            {"$group": {"_id": "$exp_start_time", "count": {"$sum": 1}}},
+            {"$match": {"count": {"$gte": 1}}},
+            {"$sort": {"count": -1}},
+        ]
 
-        for x in tag_counts:
-            print(
-             f"{x['_id']:<10} = {x['count']:>10}"
-            )
+        if limit:
+            counts += [
+                {"$limit": limit},
+            ]
+            timeline += [
+                {"$limit": limit},
+            ]
+
+        return list(
+                Fast5.objects.aggregate(*counts)
+        ), list(
+                Fast5.objects.aggregate(*timeline)
+        )
 
     ##########################
     #     DB Queries         #
@@ -500,8 +551,10 @@ class PoreMongo:
 
         """ API for querying file models using logic chains
 
-        ... on raw or restricted path, tag or name queries. MongoEngine queries
-        (Q) are chained by bitwise operator logic (query_logic).
+        ... on raw queries or restricted path, tag or name queries.
+
+        MongoEngine queries (Q) are chained by bitwise operator
+        logic (query_logic).
 
         Path, tag and name queries can also be chained with each other
         if at least two parameters given (all same operator: query_logic).
@@ -870,7 +923,7 @@ class PoreMongo:
        proportion=None,
        unique=False,
        include_tags=None,
-       exclude_name=None,
+       exclude_uuid: list = None,
        return_documents=True
     ):
 
@@ -886,9 +939,9 @@ class PoreMongo:
             include_tags = [include_tags]
 
         if tags:
-            if exclude_name:
+            if exclude_uuid:
                 query_pipeline = [
-                    {"$match": {"name": {"$nin": exclude_name}}}
+                    {"$match": {"uuid": {"$nin": exclude_uuid}}}
                 ]
             else:
                 query_pipeline = []
@@ -1160,6 +1213,14 @@ class PoreMongo:
         # Cache can be generated when doing a path search for indexing Fast5
 
         pass
+
+    @staticmethod
+    def files_from_list(path: Path, sep='\t') -> list:
+
+        """ Read Fast5 paths from a summary file with one column """
+
+        return pandas.read_csv(path, sep='\t').iloc[:, 0]
+
 
     @staticmethod
     def files_from_path(path: str, extension: str, recursive: bool):
