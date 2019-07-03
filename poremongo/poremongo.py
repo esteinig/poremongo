@@ -489,8 +489,6 @@ class PoreMongo:
         limit: int or None = 100
     ) -> (list, list):
 
-        print('Bubble chart data from server:', tags)
-
         if tags:
             match = {"$match": {"tags": {"$in": tags}}}
         else:
