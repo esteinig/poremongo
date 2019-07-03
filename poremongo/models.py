@@ -52,15 +52,6 @@ class Dataset(Document):
 
     validation = FloatField()
 
-    window_settings = EmbeddedDocumentListField(
-        document_type=WindowSettings
-    )
-    tag_settings = EmbeddedDocumentListField(
-        document_type=TagSettings
-    )
-
-
-
 
 class Sequence(EmbeddedDocument):
 
