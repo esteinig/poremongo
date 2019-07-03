@@ -25,24 +25,6 @@ def epoch_to_timestamp(epoch_seconds: float) -> str:
     return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(epoch_seconds))
 
 
-class TagSettings(EmbeddedDocument):
-
-    global_tags = ListField(StringField)
-    sample_prior = IntField(default=20000)
-    sample_proportion = StringField(default='equal')
-    sample_unique = BooleanField(default=False)
-
-
-class WindowSettings(EmbeddedDocument):
-
-    total = IntField()
-    size = IntField()
-    step = FloatField()
-    read = IntField()
-    random = BooleanField(default=True)
-    recover = BooleanField(default=False)
-
-
 class Dataset(Document):
 
     uuid = StringField()
