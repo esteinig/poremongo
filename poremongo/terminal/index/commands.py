@@ -15,7 +15,7 @@ click.option = partial(click.option, show_default=True)
          'or connect via URI: mongodb://user:pwd@address:port/dbname'
 )
 @click.option(
-    '--index_path', '-p', type=Path, required=True,
+    '--index_path', '-p', type=Path, required=False,
     help='Directory containing Fast5.'
 )
 @click.option(
@@ -23,7 +23,7 @@ click.option = partial(click.option, show_default=True)
     help='Path to JSON config file for MongoDB connection.'
 )
 @click.option(
-    '--tags', '-t', type=str, required=True,
+    '--tags', '-t', type=str, required=False,
     help='Comma separated string of tags (labels) to attach to Fast5 in DB'
 )
 @click.option(
@@ -48,7 +48,7 @@ click.option = partial(click.option, show_default=True)
     help='Port for connecting to localhost MongoDB'
 )
 def index(
-    uri, config, index_path, index_file, tags,
+    uri, config, index_path, tags,
     recursive, batch_size, ncpu, mongod, port
 ):
 
