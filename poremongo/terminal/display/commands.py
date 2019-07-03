@@ -51,9 +51,10 @@ def display(uri, config, limit, mongod, port):
 
     counts, _ = pongo.get_tag_data(limit=limit)
 
-    for count in counts:
-        print(count)
-
+    print()
+    for tag in counts:
+        print(f'{tag["_id"]}\t{tag["count"]}')
+    print()
 
     pongo.disconnect()
 
