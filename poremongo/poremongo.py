@@ -29,8 +29,8 @@ from ont_fast5_api.fast5_interface import get_fast5_file
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from poremongo.utils import run_cmd
 from poremongo.poremodels import Read
-from poremongo.utils import _get_doc, _insert_docs, run_cmd
 
 logging.basicConfig(
     level=logging.INFO,
