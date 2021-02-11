@@ -1,9 +1,10 @@
 import click
+import logging
 
 from pathlib import Path
 from functools import partial
 from poremongo.poremongo import PoreMongo
-
+from poremongo.poremodels import Read
 # Monkey patching to show all default options
 click.option = partial(click.option, show_default=True)
 
@@ -22,38 +23,35 @@ click.option = partial(click.option, show_default=True)
     help='Path to JSON config file for MongoDB connection.'
 )
 @click.option(
-    '--force', '-f', is_flag=True,
-    help='Force confirm database drop without user prompt'
+    '--limit', '-l', type=int, default=100,
+    help='Limit the number of unique tags on display.'
 )
-def drop(uri, config, force, db):
+@click.option(
+    '--total', '-t', is_flag=True,
+    help='Add a total count of reads in --db [false]'
+)
+@click.option(
+    '--quiet', is_flag=True,
+    help='Suppress logging output'
+)
+def create(uri, config, limit, db, quiet, total):
 
-    """ Drop the database at the given URI """
+    """ Create a sampled dataset """
 
     if uri == 'local':
         uri = f'mongodb://localhost:27017/{db}'
-
-    db = Path(uri).stem
 
     pongo = PoreMongo(
         config=config if config else dict(),
         uri=uri if uri else None
     )
 
-    if not force:
-        try:
-            click.confirm(
-                f'Drop database: {db} at {pongo.decompose_uri()}'
-            )
-        except click.Abort:
-            print('Drop terminated. Exiting.')
-            exit(0)
+    if quiet:
+        pongo.logger.setLevel(logging.ERROR)
 
     pongo.connect()
-    pongo.client.drop_database(db)
 
-    pongo.logger.info(
-        f'Dropped database at {pongo.decompose_uri()}'
-    )
+
 
     pongo.disconnect()
 

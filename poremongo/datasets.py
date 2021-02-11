@@ -15,8 +15,6 @@ from textwrap import dedent
 from keras.utils import Sequence
 from keras.utils.np_utils import to_categorical
 
-from poremongo.models import Fast5
-
 from pathlib import Path
 
 matplotlib.use("agg")
@@ -38,18 +36,13 @@ class AchillesDataset:
 
         self.poremongo = poremongo
 
-
     def write_from_json(self, config: str or dict):
 
         """
-        Sample multiple Datasets from a JSON file, where keys are
-        the path of the output file,
-        and values are dictionaries of parameters
-         for the write function of Dataset.
+        Sample multiple Datasets from a JSON file, where keys are  the path of the output file,
+        and values are dictionaries of parameters for the write function of Dataset.
 
         :param config:    JSON file with filename (key), write parameters dict with required parameter "tags" (values)
-
-        :return:
         """
 
         if isinstance(config, str):
@@ -73,7 +66,7 @@ class AchillesDataset:
             "window_step",
             "window_random",
             "window_recover",
-            "sample_files_per_tag",
+            "sample_reads_per_tag",
             "sample_proportions",
             "sample_unique",
             "scale",
@@ -103,10 +96,10 @@ class AchillesDataset:
             for dataset in exclude_datasets:
                 with h5py.File(dataset, "r") as infile:
                     try:
-                        exclude += infile["data/files"]
+                        exclude += infile["data/reads"]
                     except KeyError:
                         raise ValueError(
-                            f"Could not detect path 'data/files' in file {dataset}"
+                            f"Could not detect path 'data/reads' in file {dataset}"
                         )
             return exclude
         else:
@@ -116,7 +109,7 @@ class AchillesDataset:
     def parse(data_file):
 
         with h5py.File(data_file, "r") as infile:
-            return infile["data/files"], infile["data/labels"]
+            return infile["data/reads"], infile["data/labels"]
 
     def write(
         self,
@@ -128,7 +121,7 @@ class AchillesDataset:
         window_step=0.1,
         window_random=True,
         window_recover=True,
-        sample_files_per_tag=25000,
+        sample_reads_per_tag=25000,
         sample_proportions=None,
         sample_unique=False,
         exclude_datasets=None,
@@ -147,7 +140,7 @@ class AchillesDataset:
 
         :param tags:
         :param data_file:
-        :param sample_files_per_tag:
+        :param sample_reads_per_tag:
         :param sample_proportions:
         :param sample_unique:
         :param scale:
@@ -182,17 +175,17 @@ class AchillesDataset:
         classes = len(tags)
 
         # Get list of Fast5 file names to exclude from sampling in PoreMongo
-        exclude = self.get_uuids_to_exclude(exclude_datasets)
+        exclude = self.get_reads_to_exclude(exclude_datasets)
 
         with h5py.File(data_file, "w") as f:
 
             # Create data paths for storing all extracted data:
-            data, labels, decoded, extracted = self.create_data_paths(
+            data, labels, decoded, read_id = self.create_data_paths(
                 file=f, window_size=window_size, classes=classes
             )
 
             self.print_write_summary(
-                sample_files_per_tag=sample_files_per_tag,
+                sample_reads_per_tag=sample_reads_per_tag,
                 sample_proportions=sample_proportions,
                 sample_unique=sample_unique,
                 max_windows_per_read=max_windows_per_read,
@@ -208,7 +201,7 @@ class AchillesDataset:
                 files = self.poremongo.sample(
                     Fast5.objects,
                     tags=tag,
-                    limit=sample_files_per_tag,
+                    limit=sample_reads_per_tag,
                     proportion=sample_proportions,
                     unique=sample_unique,
                     exclude_uuid=exclude,
@@ -555,9 +548,9 @@ class AchillesDataset:
         decoded = file.create_dataset(
             "data/decoded", shape=(0,), maxshape=(None,)
         )
-        # File paths sampled
+        # Reads sampled
         extracted = file.create_dataset(
-            "data/uuids", shape=(0,), maxshape=(None,), dtype=dt
+            "data/reads", shape=(0,), maxshape=(None,), dtype=dt
         )
 
         return data, labels, decoded, extracted
@@ -598,7 +591,7 @@ class AchillesDataset:
 
         {Fore.YELLOW}Encoded label vector:  {Fore.MAGENTA}/data/labels{Style.RESET_ALL}
         {Fore.YELLOW}Decoded label vector:  {Fore.MAGENTA}/data/decoded{Style.RESET_ALL}
-        {Fore.YELLOW}Extracted file names:  {Fore.MAGENTA}/data/files{Style.RESET_ALL}
+        {Fore.YELLOW}Extracted file names:  {Fore.MAGENTA}/data/reads{Style.RESET_ALL}
         """
             )
         )
@@ -614,7 +607,7 @@ class AchillesDataset:
 
                     {Fore.GREEN}Data:       {Fore.YELLOW}{f["data/data"].shape}{Style.RESET_ALL}
                     {Fore.GREEN}Labels:     {Fore.YELLOW}{f["data/labels"].shape}{Style.RESET_ALL}
-                    {Fore.GREEN}Fast5:      {Fore.YELLOW}{f["data/files"].shape}{Style.RESET_ALL}
+                    {Fore.GREEN}Fast5:      {Fore.YELLOW}{f["data/reads"].shape}{Style.RESET_ALL}
                     """
                 )
 
@@ -697,10 +690,8 @@ class AchillesDataset:
     @staticmethod
     def sample_to_input(array: np.array) -> np.array:
 
-        """ Transform input array of (number_windows, window_size)
-        to (number_windows, 1, window_size, 1)
-        for input into convolutional layers:
-        (samples, height, width, channels) in AchillesModel
+        """ Transform input array of (number_windows, window_size)to (number_windows, 1, window_size, 1)
+        for input into convolutional layers: (samples, height, width, channels) in AchillesModel
         """
 
         if array.ndim != 2:
@@ -721,7 +712,7 @@ class AchillesDataset:
 
         Sampling from PoreMongo:
 
-            - {Fore.GREEN}sample_files_per_tag{Style.RESET_ALL}     {Fore.YELLOW}{kwargs["sample_files_per_tag"]}{Style.RESET_ALL} 
+            - {Fore.GREEN}sample_reads_per_tag{Style.RESET_ALL}     {Fore.YELLOW}{kwargs["sample_reads_per_tag"]}{Style.RESET_ALL} 
             - {Fore.GREEN}sample_proportions{Style.RESET_ALL}       {Fore.YELLOW}{kwargs["sample_proportions"]}{Style.RESET_ALL} 
             - {Fore.GREEN}sample_unique{Style.RESET_ALL}            {Fore.YELLOW}{kwargs["sample_unique"]}{Style.RESET_ALL} 
 

@@ -1,8 +1,11 @@
 import click
+import uuid
 
 from pathlib import Path
 from functools import partial
 from poremongo.poremongo import PoreMongo
+
+from ont_fast5_api.fast5_interface import get_fast5_file
 
 # Monkey patching to show all default options
 click.option = partial(click.option, show_default=True)
@@ -10,84 +13,58 @@ click.option = partial(click.option, show_default=True)
 
 @click.command()
 @click.option(
-    '--uri', '-u', type=str, default='local',
-    help='MongoDB URI, >local< to start a local scratch DB,'
-         'or connect via URI: mongodb://user:pwd@address:port/dbname'
+    '--tags', '-t', type=str, default=None, required=True,
+    help='Tags to apply to all reads in Fast5 files; comma-separated'
 )
 @click.option(
-    '--index_path', '-p', type=Path, required=False,
-    help='Directory containing Fast5.'
+    '--fast5', '-f', type=Path, default=None,
+    help='Path to single Fast5 or directory of Fast5 (.fast5)'
+)
+@click.option(
+    '--db', '-d', type=str, default='poremongo',
+    help='Database name to create or connect to'
+)
+@click.option(
+    '--uri', '-u', type=str, default='local',
+    help='MongoDB URI, "local" for localhost:27017 or custom Mongo URI'
 )
 @click.option(
     '--config', '-c', type=Path, default=None,
-    help='Path to JSON config file for MongoDB connection.'
+    help='Path to config file for database connection'
 )
-@click.option(
-    '--tags', '-t', type=str, required=False,
-    help='Comma separated string of tags (labels) to attach to Fast5 in DB'
-)
-@click.option(
-    '--recursive', '-r', is_flag=True,
-    help='Recursive search through directory.'
-)
-@click.option(
-    '--batch_size', '-b', type=int, default=500,
-    help='Batch size for parallel multi-inserts into DB'
-)
-@click.option(
-    '--ncpu', '-n', type=int, default=2,
-    help='Number of processors for parallel multi-inserts into DB.'
-)
-@click.option(
-    '--mongod', '-m', is_flag=True,
-    help='Start local MongoDB database in background process '
-         'and terminate after successful indexing.'
-)
-@click.option(
-    '--port', default=27017,
-    help='Port for connecting to localhost MongoDB'
-)
-def index(
-    uri, config, index_path, tags,
-    recursive, batch_size, ncpu, mongod, port
-):
+def index(uri, config, fast5, db, tags):
 
-    """ Index a path to Fast5 files and tag documents in the DB. """
+    """ Index signal reads from Fast5 files """
 
     if uri == 'local':
-        uri = f'mongodb://localhost:{port}/poremongo'
-
-    tags = [t.strip() for t in tags.split(',')]
-
-    if not tags:
-        raise ValueError('You must specify tags (labels) for indexing Fast5')
+        uri = f'mongodb://localhost:27017/{db}'
 
     pongo = PoreMongo(
         config=config if config else dict(),
         uri=uri if uri else None
     )
-
-    if pongo.local and mongod:
-        pongo.start_mongodb()
-
     pongo.connect()
 
-    pongo.index(
-        index_path=index_path,
-        index_file=None,
-        recursive=recursive,
-        scan=True,
-        batch_size=batch_size,
-        ncpu=ncpu
-    )
+    if tags:
+        tags = [t.strip() for t in tags.split(',')]
+    else:
+        tags = []
 
-    pongo.tag(
-        path_query=index_path,
-        tags=tags,
-        recursive=recursive
-    )
+    if fast5.is_dir():
+        files = fast5.glob("*.fast5")
+    elif fast5.is_file():
+        files = [fast5]
+    else:
+        raise ValueError(f'Fast5 input is neither directory nor file: {fast5}')
+
+    pongo.index_fast5(files=files, tags=tags, store_signal=False)
 
     pongo.disconnect()
 
-    if pongo.local and mongod:
-        pongo.terminate_mongodb()
+
+
+
+
+
+
+

@@ -12,6 +12,7 @@ import pymongo
 import pandas
 import logging
 import paramiko
+import uuid
 
 import multiprocessing as mp
 
@@ -24,10 +25,11 @@ from deprecation import deprecated
 from mongoengine import connect
 from mongoengine.queryset.visitor import Q
 from pymongo.errors import ServerSelectionTimeoutError
+from ont_fast5_api.fast5_interface import get_fast5_file
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from poremongo.models import Fast5, Read, Sequence
+from poremongo.poremodels import Read
 from poremongo.utils import _get_doc, _insert_docs, run_cmd
 
 logging.basicConfig(
@@ -36,7 +38,7 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 
-VERSION = '0.3'
+VERSION = '0.4'
 
 
 class PoreMongo:
@@ -49,11 +51,12 @@ class PoreMongo:
         config: Path or dict = None,
         connect: bool = False,
         ssh: bool = False,
-        mock: bool = False,
-        pwd: str = None
+        mock: bool = False
     ):
         disallowed = ['local']
-        if Path(uri).stem in disallowed:
+        self.db_name = Path(uri).stem
+
+        if self.db_name in disallowed:
             raise ValueError(f"Database can not be named: "
                              f"{', '.join(disallowed)}")
 
@@ -69,8 +72,7 @@ class PoreMongo:
 
         self.mock = mock
 
-        self.local = True if \
-            self.uri == 'mongodb://localhost:27017/poremongo' else False
+        self.local = True if "localhost:27017" in self.uri else False
 
         self.ssh = None
         self.scp = None
@@ -89,7 +91,7 @@ class PoreMongo:
             self.connect(ssh=ssh, is_mock=mock)
 
     def start_mongodb(
-            self, dbpath: Path = Path('~/.poremongo/db'), port: int = 27017
+        self, dbpath: Path = Path('~/.poremongo/db'), port: int = 27017
     ):
 
         dbpath.mkdir(parents=True, exist_ok=True)
@@ -175,7 +177,7 @@ class PoreMongo:
         self.fast5 = self.db.fast5  # Fast5 collection
 
         self.logger.info(
-            'Default collection for PoreMongo is >> fast5 <<'
+            'Default collection for PoreMongo is "fast5"'
         )
 
         if ssh:
@@ -263,178 +265,34 @@ class PoreMongo:
     #     Fast5 Indexing     #
     ##########################
 
-    # TODO: Config with paths and tags, comments
-    def index(
-        self,
-        index_path: Path = None,
-        index_file: Path = None,
-        recursive: bool = True,
-        scan: bool = True,
-        ncpu: int = 2,
-        batch_size: int = 1000,
+    def index_fast5(
+        self, files: [Path] = None, tags: list = None, store_signal: bool = False
     ):
 
-        """ Main access method to index Fast5 files into MongoDB
+        """ Main access method to index Fast5 files into MongoDB """
 
-        :param index_path
-            Path to to search for Fast5 files
+        for file in files:
+            self.logger.info(f"Index signal data [ {self.db_name} ]: {file}")
 
-        :param recursive
-            Search for Fast5 recursively
-
-        :param scan
-            Scan and extract database model from Fast5,
-            otherwise simply index model with file path only
-
-        :param ncpu
-            Number of processors to use, recommended for any
-            reasonably large Fast5 collection. Default is to
-            use multiprocessing inserts (ncpu = 2)
-
-            Warning! Documents are inserted with a unique identifier
-            field. As the batch insertion does not check whether a
-            file path is already in the database, you can therefore
-            insert the same documents multiple times
-
-        :param batch_size
-            Number of documents to insert in one process.
-
-
-        """
-
-        self.logger.info(
-            f'Initiate indexing of files (.fast5) in: {index_path}'
-        )
-
-        self.logger.info(
-            f'Collecting files, this may take some time...'
-        )
-
-        if index_path is None:
-            file_paths = self.files_from_list(
-                path=index_file
-            )
-            self.logger.info(
-                f'Collected {len(file_paths)} Fast5 files from: {index_file}'
-            )
-        else:
-            file_paths = self.files_from_path(
-                path=str(index_path),
-                extension=".fast5",
-                recursive=recursive
-            )   # Returns generator!
-
-            # Load the list into memory for chunking
-            file_paths = list(file_paths)
-
-            self.logger.info(
-                f'Collected {len(file_paths)} Fast5 files from: {index_path}'
-            )
-
-        self._index_fast5(
-            file_paths=file_paths,
-            scan_file=scan,
-            batch_size=batch_size,
-            ncpu=ncpu
-        )
-
-    def _index_fast5(
-        self,
-        file_paths: list,
-        scan_file: bool = True,
-        ncpu: int = 1,
-        batch_size: int = 1000
-    ):
-
-        total = 0
-        batch_number = 0
-
-        if ncpu > 1:
-
-            self.logger.info(
-                f'Parallel inserts enabled, processors: {ncpu}'
-            )
-
-            # Disconnect to initiate parallel connections
-            if self.is_connected():
-
-                self.disconnect()
-                self.logger.info(
-                    'Disconnected from database to initiate '
-                    'parallel database connections'
-                )
-
-            self.logger.info(
-                f'Chunking files into batches of size {batch_size}'
-            )
-            chunks = self._chunk_seq(
-                file_paths, batch_size
-            )  # in memory
-
-            logger = self.logger # Local instance for callback
-
-            def cbk(x):
-                logger.info(x)
-
-            pool = mp.Pool()
-            for i, batch in enumerate(chunks):
-                pool.apply_async(
-                    _insert_docs,
-                    args=(batch, self.uri, i, scan_file, ),
-                    callback=cbk
-                )   # Only static methods work, out-sourced functions to utils
-            pool.close()
-            pool.join()
-
-            self.logger.info(
-                f'Inserted {len(file_paths)} Fast5 files into database'
-            )
-            self.logger.info(
-                f'Reconnecting to database on single connection.'
-            )
-            self.connect()
-
-        else:
-            # This is a batch wise insert on a generator:
-            batch = []
-            for file_path in file_paths:
-                m = _get_doc(
-                    file_path,
-                    scan_file=scan_file,
-                    to_mongo=False,
-                )
-                batch.append(m)
-
-                # At each batch size save batch to collection and clear batch
-                if len(batch) == batch_size:
-                    total = self._save_batch(
-                        batch, batch_number, total
+            reads = []
+            with get_fast5_file(str(file), mode="r") as f5:
+                for read in f5.get_reads():
+                    unique_identifier = uuid.uuid4()
+                    fast5_path = file.absolute()
+                    read = Read(
+                        fast5=str(fast5_path),
+                        uuid=str(unique_identifier),
+                        tags=tags,
+                        read_id=read.read_id,
+                        signal_data=read.get_signal(start=None, end=None, scale=False) if store_signal else list()
                     )
-                    batch = []
-                    batch_number += 1
+                    reads.append(read)
 
-            # Save last batch
-            if batch:
-                self._save_batch(
-                    batch, batch_number, total
-                )
-
-    def _save_batch(
-        self,
-        batch,
-        batch_number,
-        total,
-    ):
-
-        Fast5.objects.insert(batch)
-        total += len(batch)
-
-        self.logger.info(
-            f'Inserted {len(batch)} documents (batch: {batch_number}, '
-            f'total: {total})'
-        )
-
-        return total
+            try:
+                Read.objects.insert(reads)
+                self.logger.info(f'Inserted {len(reads)} signal reads with tags [ {", ".join(tags)} ]')
+            except:
+                raise
 
     ##########################
     #     Poremongo Tags     #
@@ -462,21 +320,19 @@ class PoreMongo:
         if isinstance(path_query, Path):
             path_query = str(path_query)
 
-        self.logger.info(f'Updating tags to: {", ".join(tags)}')
-
         objects = self.query(
-            model=Fast5,
             raw_query=raw_query,
             path_query=path_query,
-            name_query=name_query,
             tag_query=tag_query,
             recursive=recursive,
             not_in=not_in
         )
 
         if remove:
+            self.logger.info(f'Remove tags from query reads: {", ".join(tags)}')
             objects.update(pull_all__tags=tags)
         else:
+            self.logger.info(f'Add tags to query reads: {", ".join(tags)}')
             objects.update(add_to_set__tags=tags)
 
     ##########################
@@ -484,7 +340,7 @@ class PoreMongo:
     ##########################
 
     @staticmethod
-    def get_tag_data(
+    def get_tag_counts(
         tags: list or None = None,
         limit: int or None = 100
     ) -> (list, list):
@@ -499,7 +355,7 @@ class PoreMongo:
             {"$unwind": "$tags"},
             {"$group": {
                     "_id": "$tags",
-                    "latest": {"$last": "$exp_start_time"},
+                    # "latest": {"$last": "$exp_start_time"},
                     "count": {"$sum": 1}
             }},
             {"$match": {
@@ -508,27 +364,13 @@ class PoreMongo:
             {"$sort": {"count": -1}},
         ]
 
-        timeline = [
-            match,
-            {"$unwind": "$exp_start_time"},
-            {"$group": {"_id": "$exp_start_time", "count": {"$sum": 1}}},
-            {"$match": {"count": {"$gte": 1}}},
-            {"$sort": {"count": -1}},
-        ]
-
         if limit:
             counts += [
                 {"$limit": limit},
             ]
-            timeline += [
-                {"$limit": limit},
-            ]
 
-        return list(
-                Fast5.objects.aggregate(*counts)
-        ), list(
-                Fast5.objects.aggregate(*timeline)
-        )
+        return list(Read.objects.aggregate(*counts))
+
 
     ##########################
     #     DB Queries         #
@@ -539,25 +381,22 @@ class PoreMongo:
         raw_query: dict = None,
         path_query: str or list = None,
         tag_query: str or list = None,
-        name_query: str or list = None,
         query_logic: str = "AND",
         abspath: bool = False,
         recursive: bool = True,
         not_in: bool = False,
-        model: Fast5 or Read or Sequence = Fast5,
+        model: Read = Read,
     ):
 
         """ API for querying file models using logic chains
 
-        ... on raw queries or restricted path, tag or name queries.
+        ... on raw queries, file path or tag queries.
 
         MongoEngine queries (Q) are chained by bitwise operator
         logic (query_logic).
 
         Path, tag and name queries can also be chained with each other
         if at least two parameters given (all same operator: query_logic).
-
-        TODO: not in for tag_query
 
         """
 
@@ -570,13 +409,11 @@ class PoreMongo:
             path_query = [path_query, ]
         if isinstance(tag_query, str):
             tag_query = [tag_query, ]
-        if isinstance(name_query, str):
-            name_query = [name_query, ]
 
         # Path filter should ask for absolute path by default:
         if abspath and path_query:
             path_query = [
-                os.path.abspath(pq) for pq in path_query
+                os.path.abspath(pq) for pq in path_query  # replace with Pathlib?
             ]
 
         # Path filter for selection:
@@ -587,13 +424,7 @@ class PoreMongo:
         else:
             path_queries = list()
 
-        if name_query:
-            name_queries = self.get_name_query(
-                name_query, not_in
-            )
-        else:
-            name_queries = list()
-
+        # Tag filter for selection:
         if tag_query:
             tag_queries = self.get_tag_query(
                 tag_query, not_in
@@ -601,7 +432,7 @@ class PoreMongo:
         else:
             tag_queries = list()
 
-        queries = path_queries + name_queries + tag_queries
+        queries = path_queries + tag_queries
 
         if not queries:
             # If there are no queries, return all models:
@@ -645,15 +476,15 @@ class PoreMongo:
         if recursive:
             if not_in:
                 return [Q(__raw__={
-                    "path": {'$regex': '^((?!{string}).)*$'.format(string=pq)}
+                    "fast5": {'$regex': '^((?!{string}).)*$'.format(string=pq)}
                 }) for pq in path_query]  # case sensitive regex (not contains)
             else:
                 return [
-                    Q(path__contains=pq) for pq in path_query
+                    Q(fast5__contains=pq) for pq in path_query
                 ]
         else:
             return [
-                Q(dir__exact=pq) for pq in path_query
+                Q(fast5__exact=pq) for pq in path_query
             ]
 
     @staticmethod
@@ -674,8 +505,7 @@ class PoreMongo:
         queryset,
         limit: int = None,
         shuffle: bool = False,
-        unique: bool = True,
-        length: int = None
+        unique: bool = True
     ) -> list:
 
         """ Filter where query sets are now living in memory """
@@ -683,17 +513,17 @@ class PoreMongo:
         query_results = list(queryset)  # Lives happily ever after in memory.
 
         if unique:
-            self.logger.info('Take the set of query results.')
+            self.logger.info('Take the set of query results')
             query_results = list(
                 set(query_results)
             )
 
         if shuffle:
-            self.logger.info('Shuffle query results.')
-            query_results = random.shuffle(query_results)
+            self.logger.info('Shuffle query results')
+            random.shuffle(query_results)
 
         if limit:
-            self.logger.info(f'Take the first {limit} query results.')
+            self.logger.info(f'Limit to first {limit} query results')
             query_results = query_results[:limit]
 
         return query_results
@@ -702,67 +532,7 @@ class PoreMongo:
     #   Cleaning DB + QC    #
     #########################
 
-    # TODO: parse FASTQ for basecalled reads and attach Sequence model to Fast5
-
-    def link_fastq(self, fastq):
-
-        from pyfastaq import sequences
-
-        fq_reader = sequences.file_reader(fastq)
-
-        fq_stats = {}
-        i = 0
-        for seq in fq_reader:
-            qual = self.average_quality(
-                [ord(x) - 33 for x in seq.qual]
-            )
-            seq_info = seq.id.split(" ")
-
-            fq_stats[seq_info[0]] = {'length': len(seq), 'quality': qual}
-            i += 1
-            if i == 5:
-                break
-
-        print(
-            fq_stats.keys()
-        )
-
-        # Return only the Fast5 objects where the
-        # nested reads have the parsed IDs
-        fast5 = Fast5.objects(
-            __raw__={
-                'reads.id': {'$in': list(
-                    fq_stats.keys()
-                )}
-            }
-        )
-
-        fq = Path(fastq)
-        fq_path, fq_dir, fq_name = fq.absolute(), fq.parent.absolute(), fq.name
-
-        for f5 in fast5:
-            if len(f5.reads) > 1:
-                print(f"Detected unsupported complementary"
-                      f" strand, skipping Fast5: {fast5.name}.")
-                continue
-
-            for read in f5.reads:
-                seq = Sequence(
-                    id=None,
-                    basecaller="albacore",
-                    version="2.1",
-                    path=fq_path,
-                    dir=fq_dir,
-                    name=fq_name,
-                    quality=fq_stats[read.id]["quality"],
-                    length=fq_stats[read.id]["length"]
-                )
-
-                read.sequences.append(
-                    seq
-                )  # Could have multiple basecalled sequences
-
-                print(read.sequences)
+    # TODO: Basecalled reads and attach sequence model to Read
 
     @staticmethod
     def average_quality(quals):
@@ -785,18 +555,6 @@ class PoreMongo:
 
     # SELECTION AND MAPPING METHODS
 
-    def callback_insert(self, fpath):
-        """Callback for upsert of newly detected .fast5 file
-        into database as Fast5 model.
-
-        :param fpath:
-        :return:
-
-        """
-        fast5 = _get_doc(fpath, scan_file=True)
-        self.logger.info(f'Insert Fast5 model: {fast5.uuid}')
-        Fast5.objects.insert(fast5)
-
     def schedule_run(
         self,
         fast5,
@@ -804,6 +562,8 @@ class PoreMongo:
         scale=1.0,
         timeout=None
     ):
+        # TODO: adopt to new Read model scheme
+
         """Schedule a run extracted from sorted completion times
         for reads contained in Fast5 models. Scale adjusts the
         time intervals between reads. Use with group_runs to
@@ -816,15 +576,15 @@ class PoreMongo:
         :param outdir:
         :param timeout:
         """
-        # Will double copy of Fast5 for 2D reads as of now TODO
-        reads = [(read, f5) for f5 in fast5 for read in f5.reads]
+
+        reads = [read for read in fast5.reads]
 
         # Sort by ascending read completion times first
         reads = sorted(
-            reads, key=lambda x: x[0].end_time, reverse=False
+            reads, key=lambda x: x.end_time, reverse=False
         )
 
-        read_end_times = [read[0].end_time for read in reads]
+        read_end_times = [read.end_time for read in reads]
 
         # Compute difference between completion of reads
         time_delta = [0] + [
@@ -915,14 +675,14 @@ class PoreMongo:
 
     def sample(
        self,
-       file_objects,
-       limit=10,
-       tags=None,
-       proportion=None,
-       unique=False,
-       include_tags=None,
+       objects,
+       limit: int = 10,
+       tags: [str] or str = None,
+       proportion: [float] = None,
+       unique: bool = False,
+       include_tags: [str] or str = None,
        exclude_uuid: list = None,
-       return_documents=True
+       return_documents: bool = True
     ):
 
         """ Add query to a queryset (file_objects)
@@ -950,49 +710,17 @@ class PoreMongo:
                 ]
 
             # Random sample across given tags:
-            if not proportion:
-                self.logger.info(
-                    f"Tags specified, but no proportions, "
-                    f"sample {limit} Fast5 from all (&) tags: {tags}"
-                )
-                query_pipeline += [
-                    {"$match": {"tags": {"$all": tags}}},
-                    {"$sample": {"size": limit}}
-                ]
-                results = list(
-                    file_objects.aggregate(*query_pipeline, allowDiskUse=True)
-                )
-
-            # Equal size of random sample for each tag:
-            elif proportion == "equal":
-                self.logger.info(
-                    f"Tags specified, equal proportions, "
-                    f"sample {int(limit/len(tags))} Fast5 "
-                    f"for each tag: {tags}"
-                )
-                results = []
-                for tag in tags:
-                    query_pipeline += [
-                        {"$match": {"tags": {"$in": [tag]}}},
-                        {"$sample": {"size": int(limit/len(tags))}}
-                    ]
-                    results += list(
-                        file_objects.aggregate(
-                            *query_pipeline, allowDiskUse=True
-                        )
-                    )
-            else:
+            if isinstance(proportion, list) and len(proportion) > 0:
 
                 if not len(proportion) == len(tags):
                     raise ValueError(
-                        "List of proportions must be the same"
-                        " length as list of tags."
+                        "List of proportions must be the same length as list of tags."
                     )
                 if not sum(proportion) == 1:
-                    raise ValueError("List of proportions must sum to 1.")
+                    raise ValueError("List of proportions must sum to 1")
 
                 self.logger.info(
-                    f"Tags specified, list of proportions, sample tags."
+                    f"Tags specified, list of proportions, sample tags"
                 )
 
                 results = []
@@ -1003,22 +731,50 @@ class PoreMongo:
                         {"$sample": {"size": lim}}
                     ]
                     results += list(
-                        file_objects.aggregate(
+                        objects.aggregate(
                             *query_pipeline, allowDiskUse=True
                         )
                     )
 
+            # Equal size of random sample for each tag:
+            else:
+                if proportion == "equal":
+                    self.logger.info(
+                        f"Tags specified, equal proportions, sample {int(limit/len(tags))} Reads for each tag: {tags}"
+                    )
+                    results = []
+                    for tag in tags:
+                        query_pipeline += [
+                            {"$match": {"tags": {"$in": [tag]}}},
+                            {"$sample": {"size": int(limit/len(tags))}}
+                        ]
+                        results += list(
+                            objects.aggregate(
+                                *query_pipeline, allowDiskUse=True
+                            )
+                        )
+                else:
+                    self.logger.info(
+                        f"Tags specified, but no proportions, sample {limit} Reads from all (&) tags: {' '.join(tags)}"
+                    )
+                    query_pipeline += [
+                        {"$match": {"tags": {"$all": tags}}},
+                        {"$sample": {"size": limit}}
+                    ]
+                    results = list(
+                        objects.aggregate(*query_pipeline, allowDiskUse=True)
+                    )
+
         else:
             self.logger.info(
-                f"No tags specified, sample {limit} files"
-                f" over given file objects"
+                f"No tags specified, sample {limit} files over given file objects"
             )
             query_pipeline = [
                 {"$sample": {"size": limit}}
             ]
 
             results = list(
-                file_objects.aggregate(
+                objects.aggregate(
                     *query_pipeline, allowDiskUse=True
                 )
             )
@@ -1027,17 +783,17 @@ class PoreMongo:
             results = list(set(results))
 
         if return_documents:
-            results = [Fast5(**result) for result in results]
+            results = [Read(**result) for result in results]
 
         return results
 
-    def paths_to_csv(self, file_objects, out_file, labels=None, sep=","):
+    def objects_to_tsv(self, file_objects, out_file: Path, labels=None, sep="\t"):
 
         self.logger.info(
             f"Writing file paths of Fast5 documents to {out_file}."
         )
 
-        data = {"paths": [obj.path for obj in file_objects]}
+        data = {"path": [obj.path for obj in file_objects], 'read_id': [obj.read_id for obj in file_objects]}
 
         if labels:
             data.update({"labels": labels})
@@ -1087,7 +843,7 @@ class PoreMongo:
             else:
                 file_objects = list(file_objects)
                 with tqdm.tqdm(
-                        total=len(file_objects)
+                    total=len(file_objects)
                 ) as pbar:
                     self.link_files(
                         file_objects,
@@ -1175,13 +931,13 @@ class PoreMongo:
                 # For results from aggregation (dicts)
                 if isinstance(obj, dict):
                     obj_path = obj["path"]
-                    obj_name = obj["name"]
                 else:
                     obj_path = obj.path
-                    obj_name = obj.name
 
                 if prefixes:
-                    obj_name = prefixes[i] + "_" + obj_name
+                    obj_name = prefixes[i] + "_" + Path(obj_path).name
+                else:
+                    obj_name = Path(obj_path).name
 
                 if symlink:
                     # If not copy, symlink:
@@ -1219,7 +975,6 @@ class PoreMongo:
 
         return pandas.read_csv(path, sep='\t').iloc[:, 0]
 
-
     @staticmethod
     def files_from_path(path: str, extension: str, recursive: bool):
 
@@ -1236,78 +991,6 @@ class PoreMongo:
                     if file.endswith(extension):
                         yield os.path.abspath(os.path.join(p, file))
 
-    @deprecated(
-        deprecated_in="0.4",
-        removed_in="1.0",
-        current_version=VERSION,
-        details="Comment field removed from Fast5 models"
-    )
-    def comment(
-        self,
-        comments,
-        path_query=None,
-        name_query=None,
-        tag_query=None,
-        remove=False,
-        recursive=True
-    ):
-
-        """ Add comments to all files with extension tag_path
-        if and only if they are already indexed in the DB.
-
-        Default recursive (for all Fast5 where tag_path in file_path)
-        or optional non-recursive search (for all Fast5 where tag_path
-         is parent_path) and printing summary.
-
-        :param comments:
-        :param path_query:
-        :param name_query:
-        :param tag_query:
-        :param remove:
-        :param recursive:
-        :return:
-
-        """
-
-        if isinstance(comments, str):
-            comments = (comments,)
-        if isinstance(comments, str):
-            comments = (comments,)
-            if isinstance(comments, str):
-                comments = (comments,)
-
-        if not self._one_active_param(path_query, name_query, tag_query):
-            raise ValueError(
-                "Tags can only be attached by one (str) "
-                "or multiple (list) attributes of either: path, name or tag"
-            )
-
-        objects = self.query(
-            model=Fast5,
-            path_query=path_query,
-            name_query=name_query,
-            tag_query=tag_query,
-            recursive=recursive
-        )
-
-        if remove:
-            objects.update(pull_all__comments=comments)
-        else:
-            objects.update(add_to_set__comments=comments)
-
-    @staticmethod
-    @deprecated(
-        deprecated_in="0.4",
-        removed_in="1.0",
-        current_version=VERSION,
-        details="Comment field removed from Fast5 models"
-    )
-    def _one_active_param(path_query, name_query, tag_query):
-
-        return sum(
-            [True for param in [path_query, name_query, tag_query]
-                if param is not None]
-        ) == 1
 
 
 
