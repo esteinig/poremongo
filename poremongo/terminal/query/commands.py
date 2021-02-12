@@ -66,8 +66,13 @@ click.option = partial(click.option, show_default=True)
     help='Query logic to chain tag queries'
 )
 @click.option(
-    '--attach_tags', type=str, default=None,
-    help='Comma separated list of tags to attach to queried results'
+    '--add_tags', type=str, default=None,
+    help='Comma separated list of tags to attach to queried results and update in DB'
+)
+@click.option(
+    '--update_tags', type=str, default=None,
+    help='Comma separated list of `key: tag` and `value: replacement tag` '
+         'in format: `key:tag,key:tag` to update tags in queried results'
 )
 @click.option(
     '--quiet', is_flag=True,
@@ -83,11 +88,12 @@ def query(
     logic,
     unique,
     limit,
-    attach_tags,
+    add_tags,
     shuffle,
     json,
     display,
     db,
+    update_tags,
     quiet
 ):
 
@@ -125,9 +131,9 @@ def query(
             read_objects, limit=limit, shuffle=shuffle, unique=unique
         )
 
-    if attach_tags:
+    if add_tags:
         pongo.tag(
-            tags=[t.strip() for t in attach_tags.split(',')],
+            tags=[t.strip() for t in add_tags.split(',')],
             raw_query=raw_query,
             tag_query=tags,
             path_query=fast5,
@@ -146,8 +152,13 @@ def query(
             data_dict = js.loads(
                 read_objects.to_json()
             )
-        with open(json, 'w') as outfile:
-            js.dump(data_dict, outfile)
+
+        if json == "-":
+            for o in data_dict:
+                print(o)
+        else:
+            with open(json, 'w') as outfile:
+                js.dump(data_dict, outfile)
 
     pongo.disconnect()
 

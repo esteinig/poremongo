@@ -53,9 +53,9 @@ def display(uri, config, limit, db, quiet, total):
 
     counts = pongo.get_tag_counts(limit=limit)
 
-    print("tag\tread_count")
+    print(f"{'tag':<20}\t{'read_count':<18}")
     for tag in counts:
-        print(f'{tag["_id"]}\t{tag["count"]}')
+        print(f'{tag["_id"]:<20}\t{tag["count"]:<18}')
 
     if total:
         print(f'total\t{len(list(Read.objects))}')

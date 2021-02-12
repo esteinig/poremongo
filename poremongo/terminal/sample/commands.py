@@ -14,7 +14,7 @@ click.option = partial(click.option, show_default=True)
 @click.command()
 
 @click.option(
-    '--tags', '-t', type=str, default=None, required=True,
+    '--tags', '-t', type=str, default=None, required=False,
     help='Comma separated string for list of tags to query'
 )
 @click.option(
@@ -71,7 +71,7 @@ def sample(
     sample
 ):
 
-    """ Query a Fast5 collection with PoreMongo """
+    """ Sample a Fast5 collection with PoreMongo """
 
     if uri == 'local':
         uri = f'mongodb://localhost:27017/{db}'
@@ -93,9 +93,11 @@ def sample(
     else:
         read_objects = Read.objects
 
+    tags = [t.strip() for t in tags.split(',')] if tags else []
+    proportions = [float(t.strip()) for t in proportion.split(',')] if proportion else []
+
     read_objects = pongo.sample(
-        objects=read_objects, tags=[t.strip() for t in tags.split(',')], unique=unique, limit=sample,
-        proportion=[float(t.strip()) for t in proportion.split(',')] if proportion else [],
+        objects=read_objects, tags=tags, unique=unique, limit=sample, proportion=proportions,
     )
 
     if display:
@@ -109,8 +111,13 @@ def sample(
             data_dict = js.loads(
                 read_objects.to_json()
             )
-        with open(json_out, 'w') as outfile:
-            js.dump(data_dict, outfile)
+
+        if json_out == "-":
+            for o in data_dict:
+                print(o)
+        else:
+            with open(json_out, 'w') as outfile:
+                js.dump(data_dict, outfile)
 
     pongo.disconnect()
 

@@ -34,7 +34,7 @@ click.option = partial(click.option, show_default=True)
     '--quiet', is_flag=True,
     help='Suppress logging output'
 )
-def create(uri, config, limit, db, quiet, total):
+def check(uri, config, db, quiet):
 
     """ Create a sampled dataset """
 
@@ -49,10 +49,9 @@ def create(uri, config, limit, db, quiet, total):
     if quiet:
         pongo.logger.setLevel(logging.ERROR)
 
+    pongo.logger.info("Conducting database connection check")
+
     pongo.connect()
-
-
-
     pongo.disconnect()
 
 

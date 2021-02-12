@@ -1,5 +1,6 @@
 import click
 
+from .check import check
 from .sample import sample
 from .index import index
 from .query import query
@@ -16,6 +17,7 @@ def terminal_client():
     pass
 
 
+terminal_client.add_command(check)
 terminal_client.add_command(sample)
 terminal_client.add_command(index)
 terminal_client.add_command(query)
