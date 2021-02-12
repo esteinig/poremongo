@@ -18,12 +18,12 @@ def cli_input(json_in: str or None):
             for entry in sys.stdin:
                 doc = js.loads(entry.rstrip())
                 docs.append(doc)
-            read_objects = QuerySet(document=Read, collection='fast5').from_json(docs)
+                
+            read_objects = QuerySet(document=Read, collection='fast5').from_json(js.dumps(docs))
         else:
             # FILE JSON
             with Path(json_in).open('r') as infile:
-                docs = js.load(infile)
-                read_objects = QuerySet(document=Read, collection='fast5').from_json(docs)
+                read_objects = QuerySet(document=Read, collection='fast5').from_json(infile)
     else:
         # Read objects in DB
         read_objects = Read.objects
