@@ -18,12 +18,12 @@ def cli_input(json_in: str or None):
             for entry in sys.stdin:
                 doc = js.loads(entry.rstrip())
                 docs.append(doc)
-            read_objects = QuerySet().from_json(docs)
+            read_objects = QuerySet(document=Read, collection='fast5').from_json(docs)
         else:
             # FILE JSON
             with Path(json_in).open('r') as infile:
                 docs = js.load(infile)
-                read_objects = QuerySet().from_json(docs)
+                read_objects = QuerySet(document=Read, collection='fast5').from_json(docs)
     else:
         # Read objects in DB
         read_objects = Read.objects
@@ -52,6 +52,7 @@ def cli_output(read_objects, json_out: str or None, display: bool, pretty: bool)
         else:
             with Path(json_out).open('w') as outfile:
                 js.dump(data_dict, outfile)
+
 
 def run_cmd(cmd, callback=None, watch=False, shell=False):
 
