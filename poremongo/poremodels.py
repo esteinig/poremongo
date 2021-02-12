@@ -59,9 +59,9 @@ class Read(Document):
     def __str__(self):
 
         if self.pretty_print:
-            return f"{Y}@{RE}{self.read_id}\t{f'{G};{RE} '.join(self.tags)}"
+            return f"{Y}@{RE}{self.read_id}\t{f'{G}::{RE}'.join(self.tags)}"
         else:
-            return f"@{self.read_id}\t{self.uuid}\t{'::'.join(self.tags)}\t{self.fast5}"
+            return f"@{self.read_id}\t{self.uuid}\t{'; '.join(self.tags)}\t{self.fast5}"
 
     def get_fast5(self, scp_client, out_dir=".", tmp_dir=None, prefix=None):
 
