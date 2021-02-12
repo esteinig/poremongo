@@ -19,6 +19,7 @@ from skimage.util import view_as_windows
 from ont_fast5_api.multi_fast5 import MultiFast5File
 from ont_fast5_api.fast5_read import Fast5Read
 
+
 def timestamp_to_epoch(timestamp: float) -> float:
     """Auxiliary function to parse timestamp into epoch time."""
 
@@ -41,13 +42,18 @@ class Read(Document):
 
     read_id = StringField()  # internal id of read
     signal_data = ListField(IntField())  # signal data array
+    signal_data_length = IntField  # numbero f signals in array
 
     meta = {"collection": "fast5"}
     is_copy: bool = False
+    pretty: bool = False
 
     def __str__(self):
 
-        return f"{self.read_id}\t{self.fast5}\t{' '.join(self.tags)}\t{self.uuid}"
+        if self.pretty:
+            return f"@{self.read_id}\t{' '.join(self.tags)}"
+        else:
+            return f"@{self.read_id}\t{self.fast5}\t{' '.join(self.tags)}\t{self.uuid}"
 
     def get_fast5(self, scp_client, out_dir=".", tmp_dir=None, prefix=None):
 
