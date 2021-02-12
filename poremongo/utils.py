@@ -44,11 +44,9 @@ def cli_output(read_objects, json_out: str or None, display: bool, pretty: bool)
                 read_objects.to_json()
             )
 
-        print(data_dict)
-
         if json_out == "-":
             for o in data_dict:
-                print(o)
+                js.dumps(o)
         else:
             with Path(json_out).open('w') as outfile:
                 js.dump(data_dict, outfile)
