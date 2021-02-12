@@ -78,6 +78,10 @@ click.option = partial(click.option, show_default=True)
     '--quiet', is_flag=True,
     help='Suppress logging output'
 )
+@click.option(
+    '--pretty', is_flag=True,
+    help='Prettier but reduced display output'
+)
 def query(
     uri,
     config,
@@ -94,7 +98,8 @@ def query(
     display,
     db,
     update_tags,
-    quiet
+    quiet,
+    pretty
 ):
 
     """ Query a Fast5 collection with PoreMongo """
@@ -143,6 +148,7 @@ def query(
 
     if display:
         for o in read_objects:
+            o.pretty_print = pretty
             print(o)
 
     if json:

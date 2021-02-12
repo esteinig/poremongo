@@ -45,8 +45,9 @@ class Read(Document):
     signal_data_length = IntField  # numbero f signals in array
 
     meta = {"collection": "fast5"}
+
     is_copy: bool = False
-    pretty: bool = False
+    pretty_print: bool = False
 
     def __str__(self):
 
