@@ -154,6 +154,8 @@ def query(
             )
 
         if json == "-":
+            print("STDOUT")
+            print(data_dict)
             for o in data_dict:
                 print(o)
         else:
