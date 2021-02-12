@@ -21,7 +21,6 @@ from pathlib import Path
 from functools import reduce
 from operator import or_, and_
 from datetime import datetime, timedelta
-from deprecation import deprecated
 from mongoengine import connect
 from mongoengine.queryset.visitor import Q
 from pymongo.errors import ServerSelectionTimeoutError
@@ -39,7 +38,6 @@ logging.basicConfig(
 )
 
 VERSION = '0.4'
-
 
 class PoreMongo:
 

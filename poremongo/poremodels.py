@@ -19,6 +19,13 @@ from skimage.util import view_as_windows
 from ont_fast5_api.multi_fast5 import MultiFast5File
 from ont_fast5_api.fast5_read import Fast5Read
 
+from colorama import Fore, Back, Style
+
+Y = Fore.YELLOW
+G = Fore.GREEN
+B = Fore.BLUE
+RE = Fore.RESET
+
 
 def timestamp_to_epoch(timestamp: float) -> float:
     """Auxiliary function to parse timestamp into epoch time."""
@@ -52,7 +59,7 @@ class Read(Document):
     def __str__(self):
 
         if self.pretty_print:
-            return f"@{self.read_id}\t{'; '.join(self.tags)}"
+            return f"{Y}@{RE}{self.read_id}\t{f'{G};{RE} '.join(self.tags)}"
         else:
             return f"@{self.read_id}\t{self.uuid}\t{'; '.join(self.tags)}\t{self.fast5}"
 
