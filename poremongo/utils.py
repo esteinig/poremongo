@@ -6,6 +6,7 @@ import json as js
 
 from pathlib import Path
 from poremongo.poremodels import Read
+from mongoengine.queryset import QuerySet
 
 
 def cli_input(json_in: str or None):
@@ -13,15 +14,16 @@ def cli_input(json_in: str or None):
     if json_in:
         if json_in == "-":
             # STDIN JSON
-            read_objects = []
+            docs = []
             for entry in sys.stdin:
                 doc = js.loads(entry.rstrip())
-                read_objects.append(Read(**doc))
+                docs.append(doc)
+            read_objects = QuerySet().from_json(docs)
         else:
             # FILE JSON
             with Path(json_in).open('r') as infile:
-                data = js.load(infile)
-                read_objects = [Read(**entry) for entry in data]
+                docs = js.load(infile)
+                read_objects = QuerySet().from_json(docs)
     else:
         # Read objects in DB
         read_objects = Read.objects
