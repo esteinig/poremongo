@@ -21,8 +21,6 @@ def cli_input(json_in: str or None):
 
             read_objects = QuerySet(document=Read, collection='fast5')
             read_objects.from_json(js.dumps(docs))
-
-            print(read_objects)
         else:
             # FILE JSON
             with Path(json_in).open('r') as infile:
