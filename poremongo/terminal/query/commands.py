@@ -94,7 +94,7 @@ def query(
     limit,
     add_tags,
     shuffle,
-    json,
+    json_out,
     display,
     db,
     update_tags,
@@ -146,7 +146,7 @@ def query(
             not_in=not_in
         )
 
-    cli_output(json_out=json, read_objects=read_objects, pretty=pretty, display=display)
+    cli_output(json_out=json_out, read_objects=read_objects, pretty=pretty, display=display)
 
     pongo.disconnect()
 
