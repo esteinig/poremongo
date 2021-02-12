@@ -51,7 +51,7 @@ class Read(Document):
 
     def __str__(self):
 
-        if self.pretty:
+        if self.pretty_print:
             return f"@{self.read_id}\t{' '.join(self.tags)}"
         else:
             return f"@{self.read_id}\t{self.fast5}\t{' '.join(self.tags)}\t{self.uuid}"
