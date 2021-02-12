@@ -54,7 +54,7 @@ click.option = partial(click.option, show_default=True)
     help='Process query results (in memory): input query results from JSON'
 )
 @click.option(
-    '--json_out', type=Path, default=None,
+    '--json_out', type=str, default=None,
     help='Process query results (in memory): output query results as JSON'
 )
 def sample(
@@ -116,7 +116,7 @@ def sample(
             for o in data_dict:
                 print(o)
         else:
-            with open(json_out, 'w') as outfile:
+            with Path(json_out).open('w') as outfile:
                 js.dump(data_dict, outfile)
 
     pongo.disconnect()

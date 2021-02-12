@@ -38,7 +38,7 @@ click.option = partial(click.option, show_default=True)
     help='DB to connect to in MongoDB'
 )
 @click.option(
-    '--json', '-j', type=Path, default=None,
+    '--json', '-j', type=str, default=None,
     help='Process query results (in memory): output query results as JSON'
 )
 @click.option(
@@ -159,7 +159,7 @@ def query(
             for o in data_dict:
                 print(o)
         else:
-            with open(json, 'w') as outfile:
+            with Path(json).open('w') as outfile:
                 js.dump(data_dict, outfile)
 
     pongo.disconnect()
