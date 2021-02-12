@@ -4,14 +4,14 @@ import logging
 from pathlib import Path
 from functools import partial
 from poremongo.poremongo import PoreMongo
-from poremongo.utils import cli_output, cli_input
+from poremongo.poremodels import Read
+from poremongo.utils import cli_output
 
 # Monkey patching to show all default options
 click.option = partial(click.option, show_default=True)
 
 
 @click.command()
-
 @click.option(
     '--tags', '-t', type=str, default=None, required=False,
     help='Comma separated string for list of tags to query'
@@ -90,7 +90,8 @@ def sample(
 
     pongo.connect()
 
-    read_objects = cli_input(json_in=json_in)
+    # Read objects in DB
+    read_objects = Read.objects
 
     tags = [t.strip() for t in tags.split(',')] if tags else []
     proportions = [float(t.strip()) for t in proportion.split(',')] if proportion else []

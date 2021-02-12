@@ -9,30 +9,6 @@ from poremongo.poremodels import Read
 from mongoengine.queryset import QuerySet
 
 
-def cli_input(json_in: str or None):
-
-    if json_in:
-        if json_in == "-":
-            # STDIN JSON
-            docs = []
-            for entry in sys.stdin:
-                doc = js.loads(entry.rstrip())
-                docs.append(doc)
-
-            read_objects = QuerySet(document=Read, collection='fast5')
-            read_objects.from_json(js.dumps(docs))
-        else:
-            # FILE JSON
-            with Path(json_in).open('r') as infile:
-                read_objects = QuerySet(document=Read, collection='fast5')
-                read_objects.from_json(infile)
-    else:
-        # Read objects in DB
-        read_objects = Read.objects
-
-    return read_objects
-
-
 def cli_output(read_objects, json_out: str or None, display: bool, pretty: bool):
 
     if display:

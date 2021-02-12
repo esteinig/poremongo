@@ -72,7 +72,14 @@ click.option = partial(click.option, show_default=True)
 @click.option(
     '--update_tags', type=str, default=None,
     help='Comma separated list of `key: tag` and `value: replacement tag` '
-         'in format: `key:tag,key:tag` to update tags in queried results'
+         'in format: `key:tag,key:tag` to update tags of queried results '
+         'i ndatabase'
+)
+@click.option(
+    '--remove_tags', type=str, default=None,
+    help='Comma separated list of `tag` in format: `tag,tag` '
+         'to remove tags in queried results'
+         'and update tags of queried results in database '
 )
 @click.option(
     '--quiet', is_flag=True,
@@ -98,6 +105,7 @@ def query(
     display,
     db,
     update_tags,
+    remove_tags,
     quiet,
     pretty
 ):
@@ -137,7 +145,7 @@ def query(
         )
 
     if add_tags:
-        pongo.tag(
+        pongo.update_tags(
             tags=[t.strip() for t in add_tags.split(',')],
             raw_query=raw_query,
             tag_query=tags,
@@ -145,6 +153,47 @@ def query(
             recursive=recursive,
             not_in=not_in
         )
+
+    if update_tags:
+        _update = {
+            k: v for pairs in update_tags.split(",") for k, v in pairs.split(":")
+        }
+        _old_tags = [k for k in _update.keys()]
+        _new_tags = [v for v in _update.values()]
+
+        pongo.update_tags(
+            tags=_new_tags,  # add new tags (query)
+            raw_query=raw_query,
+            tag_query=tags,
+            path_query=fast5,
+            recursive=recursive,
+            not_in=not_in,
+            remove=False
+        )
+
+        pongo.update_tags(
+            tags=_old_tags,  # remove old tags (on same query)
+            raw_query=raw_query,
+            tag_query=tags,
+            path_query=fast5,
+            recursive=recursive,
+            not_in=not_in,
+            remove=True
+        )
+
+    if remove_tags:
+        _remove_tags = [s.strip() for s in remove_tags.split()]
+
+        pongo.update_tags(
+            tags=_remove_tags,  # remove new tags (query)
+            raw_query=raw_query,
+            tag_query=tags,
+            path_query=fast5,
+            recursive=recursive,
+            not_in=not_in,
+            remove=True
+        )
+
 
     cli_output(json_out=json_out, read_objects=read_objects, pretty=pretty, display=display)
 

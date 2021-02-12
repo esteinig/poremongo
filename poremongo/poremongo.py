@@ -301,14 +301,14 @@ class PoreMongo:
     #     Poremongo Tags     #
     ##########################
 
-    def tag(self, tags, path_query=None, name_query=None, tag_query=None,
-            raw_query=None, remove=False, recursive=True, not_in=False):
+    def update_tags(
+        self, tags, path_query=None, tag_query=None, raw_query=None, remove=False, recursive=True, not_in=False
+    ):
 
         """
 
         :param tags:
         :param path_query:
-        :param name_query:
         :param tag_query:
         :param remove:
         :param recursive:
