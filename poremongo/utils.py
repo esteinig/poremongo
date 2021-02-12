@@ -28,8 +28,8 @@ def cli_input(json_in: str or None):
 
     return read_objects
 
-def cli_output(json_out: str or None, read_objects: list, display: bool, pretty: bool):
 
+def cli_output(read_objects, json_out: str or None, display: bool, pretty: bool):
 
     if display:
         for o in read_objects:
@@ -43,6 +43,8 @@ def cli_output(json_out: str or None, read_objects: list, display: bool, pretty:
             data_dict = js.loads(
                 read_objects.to_json()
             )
+
+        print(data_dict)
 
         if json_out == "-":
             for o in data_dict:
