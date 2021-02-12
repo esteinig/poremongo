@@ -52,7 +52,7 @@ class Read(Document):
     def __str__(self):
 
         if self.pretty_print:
-            return f"@{self.read_id}\t{' '.join(self.tags)}"
+            return f"@{self.read_id}\t{'; '.join(self.tags)}"
         else:
             return f"@{self.read_id}\t{self.uuid}\t{'; '.join(self.tags)}\t{self.fast5}"
 
