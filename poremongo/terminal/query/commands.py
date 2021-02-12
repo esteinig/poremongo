@@ -1,11 +1,11 @@
 import click
 
 import logging
-import json as js
 
 from pathlib import Path
 from functools import partial
 from poremongo.poremongo import PoreMongo
+from poremongo.utils import cli_output
 
 # Monkey patching to show all default options
 click.option = partial(click.option, show_default=True)
@@ -38,7 +38,7 @@ click.option = partial(click.option, show_default=True)
     help='DB to connect to in MongoDB'
 )
 @click.option(
-    '--json', '-j', type=str, default=None,
+    '--json_out', '-j', '-jo', type=str, default=None,
     help='Process query results (in memory): output query results as JSON'
 )
 @click.option(
@@ -146,25 +146,7 @@ def query(
             not_in=not_in
         )
 
-    if display:
-        for o in read_objects:
-            o.pretty_print = pretty
-            print(o)
-
-    if json:
-        if isinstance(read_objects, list):
-            data_dict = [js.loads(o.to_json()) for o in read_objects]
-        else:
-            data_dict = js.loads(
-                read_objects.to_json()
-            )
-
-        if json == "-":
-            for o in data_dict:
-                print(o)
-        else:
-            with Path(json).open('w') as outfile:
-                js.dump(data_dict, outfile)
+    cli_output(json_out=json, read_objects=read_objects, pretty=pretty, display=display)
 
     pongo.disconnect()
 

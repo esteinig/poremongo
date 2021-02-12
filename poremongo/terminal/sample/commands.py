@@ -1,11 +1,10 @@
 import click
-import json as js
-
 import logging
+
 from pathlib import Path
-from poremongo.poremodels import Read
 from functools import partial
 from poremongo.poremongo import PoreMongo
+from poremongo.utils import cli_output, cli_input
 
 # Monkey patching to show all default options
 click.option = partial(click.option, show_default=True)
@@ -50,12 +49,12 @@ click.option = partial(click.option, show_default=True)
     help='Force sampled documents to be unique by their ObjectID'
 )
 @click.option(
-    '--json_in', type=Path, default=None,
-    help='Process query results (in memory): input query results from JSON'
+    '--json_in', '-ji', type=str, default=None,
+    help='Process query results (in memory): input query results from JSON (can be STDIN: -)'
 )
 @click.option(
-    '--json_out', type=str, default=None,
-    help='Process query results (in memory): output query results as JSON'
+    '--json_out', '-jo', type=str, default=None,
+    help='Process query results (in memory): output query results as JSON (can be STDOUT: -)'
 )
 @click.option(
     '--pretty', is_flag=True,
@@ -91,12 +90,7 @@ def sample(
 
     pongo.connect()
 
-    if json_in:
-        with open(json_in, 'r') as infile:
-            data = js.load(infile)
-            read_objects = [Read(**entry) for entry in data]
-    else:
-        read_objects = Read.objects
+    read_objects = cli_input(json_in=json_in)
 
     tags = [t.strip() for t in tags.split(',')] if tags else []
     proportions = [float(t.strip()) for t in proportion.split(',')] if proportion else []
@@ -105,25 +99,7 @@ def sample(
         objects=read_objects, tags=tags, unique=unique, limit=sample, proportion=proportions,
     )
 
-    if display:
-        for o in read_objects:
-            o.pretty_print = pretty
-            print(o)
-
-    if json_out:
-        if isinstance(read_objects, list):
-            data_dict = [js.loads(o.to_json()) for o in read_objects]
-        else:
-            data_dict = js.loads(
-                read_objects.to_json()
-            )
-
-        if json_out == "-":
-            for o in data_dict:
-                print(o)
-        else:
-            with Path(json_out).open('w') as outfile:
-                js.dump(data_dict, outfile)
+    cli_output(json_out=json_out, read_objects=read_objects, pretty=pretty, display=display)
 
     pongo.disconnect()
 

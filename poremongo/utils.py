@@ -2,7 +2,54 @@ import os
 import sys
 import shlex
 import subprocess
+import json as js
 
+from pathlib import Path
+from poremongo.poremodels import Read
+
+
+def cli_input(json_in: str or None):
+
+    if json_in:
+        if json_in == "-":
+            # STDIN JSON
+            read_objects = []
+            for entry in sys.stdin:
+                doc = js.loads(entry.rstrip())
+                read_objects.append(Read(**doc))
+        else:
+            # FILE JSON
+            with Path(json_in).open('r') as infile:
+                data = js.load(infile)
+                read_objects = [Read(**entry) for entry in data]
+    else:
+        # Read objects in DB
+        read_objects = Read.objects
+
+    return read_objects
+
+def cli_output(json_out: str or None, read_objects: list, display: bool, pretty: bool):
+
+
+    if display:
+        for o in read_objects:
+            o.pretty_print = pretty
+            print(o)
+
+    if json_out:
+        if isinstance(read_objects, list):
+            data_dict = [js.loads(o.to_json()) for o in read_objects]
+        else:
+            data_dict = js.loads(
+                read_objects.to_json()
+            )
+
+        if json_out == "-":
+            for o in data_dict:
+                print(o)
+        else:
+            with Path(json_out).open('w') as outfile:
+                js.dump(data_dict, outfile)
 
 def run_cmd(cmd, callback=None, watch=False, shell=False):
 
