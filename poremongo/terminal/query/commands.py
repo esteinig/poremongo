@@ -86,7 +86,7 @@ click.option = partial(click.option, show_default=True)
     help='Suppress logging output'
 )
 @click.option(
-    '--pretty', is_flag=True,
+    '--detail', is_flag=True,
     help='Prettier but reduced display output'
 )
 def query(
@@ -107,7 +107,7 @@ def query(
     update_tags,
     remove_tags,
     quiet,
-    pretty
+    detail
 ):
 
     """ Query a Fast5 collection with PoreMongo """
@@ -194,8 +194,7 @@ def query(
             remove=True
         )
 
-
-    cli_output(json_out=json_out, read_objects=read_objects, pretty=pretty, display=display)
+    cli_output(json_out=json_out, read_objects=read_objects, pretty=not detail, display=display)
 
     pongo.disconnect()
 
