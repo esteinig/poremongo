@@ -57,6 +57,10 @@ click.option = partial(click.option, show_default=True)
     '--json_out', type=str, default=None,
     help='Process query results (in memory): output query results as JSON'
 )
+@click.option(
+    '--pretty', is_flag=True,
+    help='Prettier but reduced display output'
+)
 def sample(
     uri,
     config,
@@ -68,7 +72,8 @@ def sample(
     unique,
     display,
     quiet,
-    sample
+    sample,
+    pretty
 ):
 
     """ Sample a Fast5 collection with PoreMongo """
@@ -102,6 +107,7 @@ def sample(
 
     if display:
         for o in read_objects:
+            o.pretty_print = pretty
             print(o)
 
     if json_out:
