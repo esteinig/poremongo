@@ -49,7 +49,11 @@ click.option = partial(click.option, show_default=True)
     help='Force sampled documents to be unique by their ObjectID'
 )
 @click.option(
-    '--json', '-j', type=str, default=None,
+    '--json_in', '-ji', type=str, default=None,
+    help='Process query results (in memory): input query results from JSON (can be STDIN: -)'
+)
+@click.option(
+    '--json_out', '-jo', type=str, default=None,
     help='Process query results (in memory): output query results as JSON (can be STDOUT: -)'
 )
 @click.option(
@@ -62,6 +66,7 @@ def sample(
     tags,
     db,
     proportion,
+    json_in,
     json_out,
     unique,
     display,

@@ -19,7 +19,7 @@ from skimage.util import view_as_windows
 from ont_fast5_api.multi_fast5 import MultiFast5File
 from ont_fast5_api.fast5_read import Fast5Read
 
-from colorama import Fore
+from colorama import Fore, Back, Style
 
 Y = Fore.YELLOW
 G = Fore.GREEN
@@ -72,14 +72,14 @@ class Read(Document):
         else:
             tmp_dir = Path(tmp_dir)
 
-        fast5_path = Path(self.fast5)
+        fast5_path = Path(self.path)
 
         tmp_fast5 = tmp_dir / fast5_path.name
 
         if not tmp_fast5.exists():
-            scp_client.get(self.fast5, local_path=tmp_dir)
+            scp_client.get(self.path, local_path=tmp_dir)
         else:
-            pass
+            self.logger.debug(f"Fast5 file ({fast5_path.name}) exists and is skipped")
 
         if prefix:
             tmp_fast5.rename(tmp_fast5.parent / f"{prefix}_{tmp_fast5.stem}_{tmp_fast5.suffix}")
@@ -100,7 +100,7 @@ class Read(Document):
             if local_path.exists():
                local_path.unlink()
             else:
-               pass
+               self.logger.debug(f"Did not remove not existant file: {local_path}")
         else:
             raise ValueError(
                 "Model path must have been modified by self.get - "
@@ -110,6 +110,9 @@ class Read(Document):
 
     def get_signal(
         self,
+        start: int = None,
+        end: int = None,
+        scale: bool = False,
         window_size: int = None,
         window_step: int = None
     ) -> np.array:
@@ -117,10 +120,9 @@ class Read(Document):
         """ Scaled pA values (float32) or raw signal values (int16),
         return array of length 1 (1D) or array of length 2 (2D) """
 
-        fast5: MultiFast5File = MultiFast5File(self.fast5)
+        fast5: MultiFast5File = MultiFast5File(self.path)
         signal_read: Fast5Read = fast5.get_read(read_id=self.read_id)
-
-        raw_signal: np.array = signal_read.get_raw_data(start=None, end=None, scale=False)  # full read
+        raw_signal: np.array = signal_read.get_raw_data(start=start, end=end, scale=scale)
 
         # Windows will only return full-sized windows,
         # incomplete windows at end of read are not included -
