@@ -37,10 +37,6 @@ click.option = partial(click.option, show_default=True)
     help='Proportion to sample across tags'
 )
 @click.option(
-    '--display', '-d', is_flag=True,
-    help='Print query results in human readable row summary format to STDOUT'
-)
-@click.option(
     '--quiet', '-q', is_flag=True,
     help='Suppress logging output'
 )
@@ -64,7 +60,6 @@ def sample(
     proportion,
     json,
     unique,
-    display,
     quiet,
     sample,
     detail
@@ -89,10 +84,9 @@ def sample(
     read_objects = Read.objects
 
     tags = [t.strip() for t in tags.split(',')] if tags else []
-    proportions = [float(t.strip()) for t in proportion.split(',')] if proportion else []
 
     read_objects = pongo.sample(
-        objects=read_objects, tags=tags, unique=unique, limit=sample, proportion=proportions,
+        objects=read_objects, tags=tags, unique=unique, limit=sample, proportion=proportion,
     )
 
     cli_output(json_out=json, read_objects=read_objects, detail=detail)

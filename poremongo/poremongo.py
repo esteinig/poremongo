@@ -696,6 +696,13 @@ class PoreMongo:
         if isinstance(tags, str):
             tags = [tags]
 
+        if proportion == "equal":
+            pass
+        elif proportion == "all":
+            pass
+        else:
+            proportion = [float(t.strip()) for t in proportion.split(',')] if proportion else []
+
         if isinstance(include_tags, str):
             include_tags = [include_tags]
 
