@@ -149,6 +149,9 @@ def query(
         )
 
     if update_tags:
+
+        # Assumes old are present, can therefore add to tags without removing old tags (if not present)
+
         old_tags = []
         new_tags = []
         for pairs in update_tags.split(","):
