@@ -129,7 +129,7 @@ def query(
         tag_query=[t.strip() for t in tags.split(',')] if tags else None,
         path_query=fast5,
         recursive=recursive,
-        not_in=not_in,
+        not_in=not_in_path,
         query_logic=logic
     )
 
@@ -145,7 +145,7 @@ def query(
             tag_query=tags,
             path_query=fast5,
             recursive=recursive,
-            not_in=not_in
+            not_in=not_in_path
         )
 
     if update_tags:
