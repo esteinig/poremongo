@@ -38,7 +38,7 @@ click.option = partial(click.option, show_default=True)
     help='DB to connect to in MongoDB'
 )
 @click.option(
-    '--json_out', '-j', '-jo', type=str, default=None,
+    '--json_out', '-j', type=str, default=None,
     help='Process query results (in memory): output query results as JSON'
 )
 @click.option(
@@ -160,6 +160,9 @@ def query(
         }
         _old_tags = [k for k in _update.keys()]
         _new_tags = [v for v in _update.values()]
+
+        print(_old_tags)
+        print(_new_tags)
 
         pongo.update_tags(
             tags=_new_tags,  # add new tags (query)

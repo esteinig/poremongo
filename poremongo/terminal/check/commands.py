@@ -36,7 +36,7 @@ click.option = partial(click.option, show_default=True)
 )
 def check(uri, config, db, quiet):
 
-    """ Create a sampled dataset """
+    """ Check a database connection """
 
     if uri == 'local':
         uri = f'mongodb://localhost:27017/{db}'
