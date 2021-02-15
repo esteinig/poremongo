@@ -716,7 +716,7 @@ class PoreMongo:
 
             if include_tags:
                 query_pipeline += [
-                    {"$match": {"tags": {"$all": include_tags}}}
+                    {"$match": {"tags": {"$all": include_tags}}}  # global tag search first
                 ]
 
             # Random sample across given tags:

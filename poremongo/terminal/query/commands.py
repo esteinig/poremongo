@@ -13,37 +13,36 @@ click.option = partial(click.option, show_default=True)
 
 @click.command()
 @click.option(
-    '--uri', '-u', type=str, default='local',
-    help='MongoDB URI, "local" or URI'
-)
-@click.option(
-    '--config', '-c', type=Path, default=None,
-    help='Path to JSON config for MongoDB connection AND raw PyMongo queries.'
-)
-@click.option(
-    '--recursive', '-r', is_flag=True,
-    help='Use a recursive path_query to return documents where '
-         'path_query is contained in the file path to Fast5'
-)
-@click.option(
     '--tags', '-t', type=str, default=None,
     help='Comma separated string for list of tags to query: tag_1,tag_2'
 )
 @click.option(
-    '--fast5', '-f', type=str, default=None,
-    help='Exact path query for Fast5 file; use --recursive to execute a query on a part of the path'
+    '--uri', '-u', type=str, default='local',
+    help='MongoDB URI, "local" or URI'
 )
 @click.option(
     '--db', '-d', default='poremongo',
     help='DB to connect to in MongoDB'
 )
 @click.option(
-    '--json', '-j', type=str, default=None,
-    help='Process query results (in memory): output query results as JSON'
+    '--config', '-c', type=Path, default=None,
+    help='Path to JSON config for MongoDB connection AND raw PyMongo queries.'
 )
 @click.option(
-    '--display', '-d', is_flag=True,
-    help='Display query results in human readable format'
+    '--fast5', '-f', type=str, default=None,
+    help='Path query for file names of Fast5'
+)
+@click.option(
+    '--recursive', '-r', is_flag=True,
+    help='Use a recursive --fast5 to return documents contained in the path to Fast5'
+)
+@click.option(
+    '--not_in_path', is_flag=True,
+    help='Negate a --fast5 query on path to Fast5'
+)
+@click.option(
+    '--json', '-j', type=str, default=None,
+    help='Process query results (in memory): output query results as JSON'
 )
 @click.option(
     '--shuffle', is_flag=True,
@@ -51,15 +50,11 @@ click.option = partial(click.option, show_default=True)
 )
 @click.option(
     '--limit', type=int, default=None,
-    help='Process query results (in memory): shuffle query objects'
+    help='Process query results (in memory): limit query objects'
 )
 @click.option(
     '--unique', is_flag=True,
     help='Process query results (in memory): set of query objects to ensure uniqueness'
-)
-@click.option(
-    '--not_in', is_flag=True,
-    help='Reverse a path query to exclude paths'
 )
 @click.option(
     '--logic', type=str, default='AND',
@@ -95,14 +90,13 @@ def query(
     tags,
     fast5,
     recursive,
-    not_in,
+    not_in_path,
     logic,
     unique,
     limit,
     add_tags,
     shuffle,
     json,
-    display,
     db,
     update_tags,
     remove_tags,
