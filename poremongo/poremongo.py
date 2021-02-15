@@ -723,20 +723,20 @@ class PoreMongo:
                     raise ValueError("List of proportions must sum to 1")
 
                 self.logger.info(
-                    f"Tags specified, list of proportions, sample tags: {tags}"
+                    f"Tags specified, list of proportions, sample documents proportionally for each: {' '.join(tags)}"
                 )
 
                 results = []
                 for i in range(len(tags)):
                     lim = int(limit * proportion[i])
                     print(f"Sampling {tags[i]} {lim}")
-                    query_pipeline += [
+                    tag_query = query_pipeline + [
                         {"$match": {"tags": {"$in": [tags[i]]}}},
                         {"$sample": {"size": lim}}
                     ]
                     results += list(
                         objects.aggregate(
-                            *query_pipeline, allowDiskUse=True
+                            *tag_query, allowDiskUse=True
                         )
                     )
 
@@ -744,22 +744,22 @@ class PoreMongo:
             else:
                 if proportion == "equal":
                     self.logger.info(
-                        f"Tags specified, equal proportions, sample {int(limit/len(tags))} Reads for each tag: {tags}"
+                        f"Tags specified, equal proportions, sample documents equally for each tag: {' '.join(tags)}"
                     )
                     results = []
                     for tag in tags:
-                        query_pipeline += [
+                        tag_query = query_pipeline + [
                             {"$match": {"tags": {"$in": [tag]}}},
                             {"$sample": {"size": int(limit/len(tags))}}
                         ]
                         results += list(
                             objects.aggregate(
-                                *query_pipeline, allowDiskUse=True
+                                *tag_query, allowDiskUse=True
                             )
                         )
                 else:
                     self.logger.info(
-                        f"Tags specified, but no proportions, sample {limit} Reads from all (&) tags: {' '.join(tags)}"
+                        f"Tags specified, but no proportions, sample documents with all tags: {' '.join(tags)}"
                     )
                     query_pipeline += [
                         {"$match": {"tags": {"$all": tags}}},
@@ -771,7 +771,7 @@ class PoreMongo:
 
         else:
             self.logger.info(
-                f"No tags specified, sample {limit} files over given file objects"
+                f"No tags specified, sample randomly from all documents"
             )
             query_pipeline = [
                 {"$sample": {"size": limit}}
