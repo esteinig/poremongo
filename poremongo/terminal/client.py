@@ -5,7 +5,7 @@ from .sample import sample
 from .index import index
 from .query import query
 from .drop import drop
-from .display import display
+from .counts import counts
 
 VERSION = '0.3'
 
@@ -22,4 +22,4 @@ terminal_client.add_command(sample)
 terminal_client.add_command(index)
 terminal_client.add_command(query)
 terminal_client.add_command(drop)
-terminal_client.add_command(display)
+terminal_client.add_command(counts)

@@ -8,6 +8,11 @@ from poremongo.poremodels import Read
 # Monkey patching to show all default options
 click.option = partial(click.option, show_default=True)
 
+from colorama import Fore
+
+Y = Fore.YELLOW
+G = Fore.GREEN
+RE = Fore.RESET
 
 @click.command()
 @click.option(
@@ -34,7 +39,7 @@ click.option = partial(click.option, show_default=True)
     '--quiet', is_flag=True,
     help='Suppress logging output'
 )
-def display(uri, config, limit, db, quiet, total):
+def counts(uri, config, limit, db, quiet, total):
 
     """ Display most common tags in the database """
 
@@ -51,14 +56,16 @@ def display(uri, config, limit, db, quiet, total):
 
     pongo.connect()
 
-    counts = pongo.get_tag_counts(limit=limit)
+    _counts = pongo.get_tag_counts(limit=limit)
 
-    print(f"{'tag':<20}\t{'read_count':<18}")
-    for tag in counts:
-        print(f'{tag["_id"]:<20}\t{tag["count"]:<18}')
+    print(f"{Y}{'tag':<20}\t{G}{'read_count':<18}{RE}")
+    print(38*"-")
+    for tag in _counts:
+        print(f'{Y}{tag["_id"]:<20}\t{G}{tag["count"]:<18}{RE}')
 
     if total:
-        print(f'total\t{len(list(Read.objects))}')
+        print(f'\n{Y}total\t{G}{len(list(Read.objects))}{RE}')
+
     pongo.disconnect()
 
 

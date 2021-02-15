@@ -374,7 +374,6 @@ class PoreMongo:
 
         return list(Read.objects.aggregate(*counts))
 
-
     ##########################
     #     DB Queries         #
     ##########################
@@ -404,6 +403,7 @@ class PoreMongo:
         """
 
         # TODO implement nested lists as query objects and nested logic chains?
+        # TODO: parse tag, check for & or | in tag combo, chain tag query logic?
 
         if raw_query:
             return model.objects(__raw__=raw_query)
@@ -415,23 +415,17 @@ class PoreMongo:
 
         # Path filter should ask for absolute path by default:
         if abspath and path_query:
-            path_query = [
-                os.path.abspath(pq) for pq in path_query  # replace with Pathlib?
-            ]
+            path_query = [os.path.abspath(pq) for pq in path_query]  # replace with Pathlib?
 
         # Path filter for selection:
         if path_query:
-            path_queries = self.get_path_query(
-                path_query, recursive, not_in
-            )
+            path_queries = self.get_path_query(path_query, recursive, not_in)
         else:
             path_queries = list()
 
         # Tag filter for selection:
         if tag_query:
-            tag_queries = self.get_tag_query(
-                tag_query, not_in
-            )
+            tag_queries = self.get_tag_query(tag_query, not_in)
         else:
             tag_queries = list()
 
@@ -534,27 +528,6 @@ class PoreMongo:
     #########################
     #   Cleaning DB + QC    #
     #########################
-
-    # TODO: Basecalled reads and attach sequence model to Read
-
-    @staticmethod
-    def average_quality(quals):
-
-        """
-        Receive the integer quality scores of a read and return
-        the average quality for that read
-
-        First convert Phred scores to probabilities,
-        calculate average error probability and
-        convert average back to Phred scale.
-
-        https://gigabaseorgigabyte.wordpress.com/2017/06/26/
-        averaging-basecall-quality-scores-the-right-way/
-        """
-
-        return -10 * math.log(sum(
-            [10 ** (q / -10) for q in quals]
-        ) / len(quals), 10)
 
     # SELECTION AND MAPPING METHODS
 
@@ -681,7 +654,7 @@ class PoreMongo:
        objects,
        limit: int = 10,
        tags: [str] or str = None,
-       proportion: [float] or str = None,
+       proportion: str = None,
        unique: bool = False,
        include_tags: [str] or str = None,
        exclude_uuid: list = None,
@@ -695,16 +668,17 @@ class PoreMongo:
 
         if isinstance(tags, str):
             tags = [tags]
+        if isinstance(include_tags, str):
+            include_tags = [include_tags]
 
         if proportion == "equal":
             pass
         elif proportion == "all":
             pass
         else:
-            proportion = [float(t.strip()) for t in proportion.split(',')] if proportion else []
-
-        if isinstance(include_tags, str):
-            include_tags = [include_tags]
+            proportion = [
+                float(t.strip()) for t in proportion.split(',')
+            ] if proportion else []
 
         if tags:
             if exclude_uuid:
@@ -810,7 +784,7 @@ class PoreMongo:
             data.update({"labels": labels})
 
         pandas.DataFrame(data).to_csv(
-            out_file, header=None, index=None, sep=sep
+            out_file, header=False, index=False, sep=sep
         )
 
     def copy(

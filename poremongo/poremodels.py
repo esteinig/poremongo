@@ -1,12 +1,4 @@
-import os
-import time
 import numpy as np
-import uuid
-
-from mongoengine import *
-from skimage.util import view_as_windows
-
-from ont_fast5_api.fast5_interface import get_fast5_file
 
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +11,7 @@ from skimage.util import view_as_windows
 from ont_fast5_api.multi_fast5 import MultiFast5File
 from ont_fast5_api.fast5_read import Fast5Read
 
-from colorama import Fore, Back, Style
+from colorama import Fore
 
 Y = Fore.YELLOW
 G = Fore.GREEN
@@ -72,14 +64,14 @@ class Read(Document):
         else:
             tmp_dir = Path(tmp_dir)
 
-        fast5_path = Path(self.path)
+        fast5_path = Path(self.fast5)
 
         tmp_fast5 = tmp_dir / fast5_path.name
 
         if not tmp_fast5.exists():
-            scp_client.get(self.path, local_path=tmp_dir)
+            scp_client.get(self.fast5, local_path=tmp_dir)
         else:
-            self.logger.debug(f"Fast5 file ({fast5_path.name}) exists and is skipped")
+            pass
 
         if prefix:
             tmp_fast5.rename(tmp_fast5.parent / f"{prefix}_{tmp_fast5.stem}_{tmp_fast5.suffix}")
@@ -98,9 +90,9 @@ class Read(Document):
         if self.is_copy:
             local_path = Path(self.fast5)
             if local_path.exists():
-               local_path.unlink()
+                local_path.unlink()
             else:
-               self.logger.debug(f"Did not remove not existant file: {local_path}")
+                pass
         else:
             raise ValueError(
                 "Model path must have been modified by self.get - "
@@ -117,10 +109,9 @@ class Read(Document):
         window_step: int = None
     ) -> np.array:
 
-        """ Scaled pA values (float32) or raw signal values (int16),
-        return array of length 1 (1D) or array of length 2 (2D) """
+        """ Scaled pA values (float32) or raw data acquisition values (int16) """
 
-        fast5: MultiFast5File = MultiFast5File(self.path)
+        fast5: MultiFast5File = MultiFast5File(self.fast5)
         signal_read: Fast5Read = fast5.get_read(read_id=self.read_id)
         raw_signal: np.array = signal_read.get_raw_data(start=start, end=end, scale=scale)
 
