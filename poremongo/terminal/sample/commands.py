@@ -53,8 +53,8 @@ click.option = partial(click.option, show_default=True)
     help='Process query results (in memory): output query results as JSON (can be STDOUT: -)'
 )
 @click.option(
-    '--pretty', is_flag=True,
-    help='Prettier but reduced display output'
+    '--detail', is_flag=True,
+    help='Less pretty output but with unique identifiers of documents and path to Fast5'
 )
 def sample(
     uri,
@@ -67,7 +67,7 @@ def sample(
     display,
     quiet,
     sample,
-    pretty
+    detail
 ):
 
     """ Sample a Fast5 collection with PoreMongo """
@@ -95,7 +95,7 @@ def sample(
         objects=read_objects, tags=tags, unique=unique, limit=sample, proportion=proportions,
     )
 
-    cli_output(json_out=json, read_objects=read_objects, pretty=pretty, display=display)
+    cli_output(json_out=json, read_objects=read_objects, pretty=not detail, display=display)
 
     pongo.disconnect()
 
