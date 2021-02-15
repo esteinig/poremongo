@@ -68,7 +68,7 @@ def counts(uri, config, limit, db, quiet, total):
         print(f'\n{Y}{"total":<46}\t{G}{len(list(Read.objects)):<18}{RE}')
     print(64 * "-")
     print()
-    
+
     pongo.disconnect()
 
 
