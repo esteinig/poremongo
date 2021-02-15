@@ -58,6 +58,7 @@ def counts(uri, config, limit, db, quiet, total):
 
     _counts = pongo.get_tag_counts(limit=limit)
 
+    print()
     print(f"{Y}{'tag':46}\t{G}{'read_count':<18}{RE}")
     print(64*"-")
     for tag in _counts:
@@ -65,7 +66,9 @@ def counts(uri, config, limit, db, quiet, total):
 
     if total:
         print(f'\n{Y}{"total":<46}\t{G}{len(list(Read.objects)):<18}{RE}')
-
+    print(64 * "-")
+    print()
+    
     pongo.disconnect()
 
 
