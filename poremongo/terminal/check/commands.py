@@ -23,14 +23,6 @@ click.option = partial(click.option, show_default=True)
     help='Path to JSON config file for MongoDB connection.'
 )
 @click.option(
-    '--limit', '-l', type=int, default=100,
-    help='Limit the number of unique tags on display.'
-)
-@click.option(
-    '--total', '-t', is_flag=True,
-    help='Add a total count of reads in --db [false]'
-)
-@click.option(
     '--quiet', is_flag=True,
     help='Suppress logging output'
 )
