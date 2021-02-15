@@ -49,11 +49,7 @@ click.option = partial(click.option, show_default=True)
     help='Force sampled documents to be unique by their ObjectID'
 )
 @click.option(
-    '--json_in', '-ji', type=str, default=None,
-    help='Process query results (in memory): input query results from JSON (can be STDIN: -)'
-)
-@click.option(
-    '--json_out', '-jo', type=str, default=None,
+    '--json', '-j', type=str, default=None,
     help='Process query results (in memory): output query results as JSON (can be STDOUT: -)'
 )
 @click.option(
@@ -66,8 +62,7 @@ def sample(
     tags,
     db,
     proportion,
-    json_in,
-    json_out,
+    json,
     unique,
     display,
     quiet,
@@ -100,7 +95,7 @@ def sample(
         objects=read_objects, tags=tags, unique=unique, limit=sample, proportion=proportions,
     )
 
-    cli_output(json_out=json_out, read_objects=read_objects, pretty=pretty, display=display)
+    cli_output(json_out=json, read_objects=read_objects, pretty=pretty, display=display)
 
     pongo.disconnect()
 
