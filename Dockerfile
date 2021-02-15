@@ -19,5 +19,5 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-${MINICONDA_VERS
 
 RUN conda install tensorflow-gpu keras
 
-RUN git clone https://github.com/esteinig/poremongo && pip install poremongo/
+RUN git clone -b v0.4.0  https://github.com/esteinig/poremongo && pip install poremongo/
 
