@@ -65,7 +65,7 @@ click.option = partial(click.option, show_default=True)
     help='Comma separated list of tags to attach to queried results and update in DB'
 )
 @click.option(
-    '--update_tags', type=str, default=None,
+    '--replace_tags', type=str, default=None,
     help='Comma separated list of `key: tag` and `value: replacement tag` '
          'in format: `key:tag,key:tag` to update tags of queried results '
          'i ndatabase'
@@ -98,7 +98,7 @@ def query(
     shuffle,
     json,
     db,
-    update_tags,
+    replace_tags,
     remove_tags,
     quiet,
     detail
@@ -148,13 +148,13 @@ def query(
             not_in=not_in_path
         )
 
-    if update_tags:
+    if replace_tags:
 
         # Assumes old are present, can therefore add to tags without removing old tags (if not present)
 
         old_tags = []
         new_tags = []
-        for pairs in update_tags.split(","):
+        for pairs in replace_tags.split(","):
             old, new = pairs.split(":")
             old_tags.append(old)
             new_tags.append(new)
