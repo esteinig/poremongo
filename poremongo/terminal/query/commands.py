@@ -149,6 +149,9 @@ def query(
         )
 
     if update_tags:
+        for pairs in update_tags.split(","):
+            print(pairs)
+            print(pairs.split(":"))
         print(update_tags.split(","))
         print(update_tags)
         _update = {
