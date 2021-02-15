@@ -681,7 +681,7 @@ class PoreMongo:
        objects,
        limit: int = 10,
        tags: [str] or str = None,
-       proportion: [float] = None,
+       proportion: [float] or str = None,
        unique: bool = False,
        include_tags: [str] or str = None,
        exclude_uuid: list = None,
