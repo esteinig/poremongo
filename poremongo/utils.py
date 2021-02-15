@@ -9,12 +9,7 @@ from poremongo.poremodels import Read
 from mongoengine.queryset import QuerySet
 
 
-def cli_output(read_objects, json_out: str or None, display: bool, pretty: bool):
-
-    if display:
-        for o in read_objects:
-            o.pretty_print = pretty
-            print(o)
+def cli_output(read_objects, json_out: str or None, detail: bool):
 
     if json_out:
         if isinstance(read_objects, list):
@@ -30,7 +25,10 @@ def cli_output(read_objects, json_out: str or None, display: bool, pretty: bool)
         else:
             with Path(json_out).open('w') as outfile:
                 js.dump(data_dict, outfile)
-
+    else:
+        for o in read_objects:
+            o.pretty_print = not detail
+            print(o)
 
 def run_cmd(cmd, callback=None, watch=False, shell=False):
 

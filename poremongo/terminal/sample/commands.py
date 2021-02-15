@@ -95,7 +95,7 @@ def sample(
         objects=read_objects, tags=tags, unique=unique, limit=sample, proportion=proportions,
     )
 
-    cli_output(json_out=json, read_objects=read_objects, pretty=not detail, display=display)
+    cli_output(json_out=json, read_objects=read_objects, detail=detail)
 
     pongo.disconnect()
 
