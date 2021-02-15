@@ -38,7 +38,7 @@ click.option = partial(click.option, show_default=True)
     help='DB to connect to in MongoDB'
 )
 @click.option(
-    '--json_out', '-j', type=str, default=None,
+    '--json', '-j', type=str, default=None,
     help='Process query results (in memory): output query results as JSON'
 )
 @click.option(
@@ -87,7 +87,7 @@ click.option = partial(click.option, show_default=True)
 )
 @click.option(
     '--detail', is_flag=True,
-    help='Prettier but reduced display output'
+    help='Less pretty output but with unique identifiers of documents and path to Fast5'
 )
 def query(
     uri,
