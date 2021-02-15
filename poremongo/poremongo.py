@@ -723,12 +723,13 @@ class PoreMongo:
                     raise ValueError("List of proportions must sum to 1")
 
                 self.logger.info(
-                    f"Tags specified, list of proportions, sample tags"
+                    f"Tags specified, list of proportions, sample tags: {tags}"
                 )
 
                 results = []
                 for i in range(len(tags)):
                     lim = int(limit * proportion[i])
+                    print(f"Sampling {tags[i]} {lim}")
                     query_pipeline += [
                         {"$match": {"tags": {"$in": [tags[i]]}}},
                         {"$sample": {"size": lim}}
