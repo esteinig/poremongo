@@ -149,9 +149,13 @@ def query(
         )
 
     if update_tags:
+        print(update_tags.split(","))
+        print(update_tags)
         _update = {
             k: v for pairs in update_tags.split(",") for k, v in pairs.split(":")
         }
+
+
         _old_tags = [k for k in _update.keys()]
         _new_tags = [v for v in _update.values()]
 
