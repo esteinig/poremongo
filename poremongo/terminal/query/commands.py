@@ -164,7 +164,7 @@ def query(
             tag_query=tags,
             path_query=fast5,
             recursive=recursive,
-            not_in=not_in,
+            not_in=not_in_path,
             remove=False
         )
 
@@ -174,7 +174,7 @@ def query(
             tag_query=tags,
             path_query=fast5,
             recursive=recursive,
-            not_in=not_in,
+            not_in=not_in_path,
             remove=True
         )
 
@@ -187,7 +187,7 @@ def query(
             tag_query=tags,
             path_query=fast5,
             recursive=recursive,
-            not_in=not_in,
+            not_in=not_in_path,
             remove=True
         )
 
