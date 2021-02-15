@@ -41,7 +41,7 @@ class Read(Document):
 
     read_id = StringField()  # internal id of read
     signal_data = ListField(IntField())  # signal data array
-    signal_data_length = IntField  # numbero f signals in array
+    signal_data_length = IntField()  # number of signals in array
 
     meta = {"collection": "fast5"}
 

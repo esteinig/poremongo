@@ -57,7 +57,7 @@ def index(uri, config, fast5, db, tags):
     else:
         raise ValueError(f'Fast5 input is neither directory nor file: {fast5}')
 
-    pongo.index_fast5(files=files, tags=tags, store_signal=False)
+    pongo.index_fast5(files=files, tags=tags, store_signal=False, add_signal_info=False)
 
     pongo.disconnect()
 
