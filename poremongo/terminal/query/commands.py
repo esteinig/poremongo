@@ -149,24 +149,15 @@ def query(
         )
 
     if update_tags:
+        old_tags = []
+        new_tags = []
         for pairs in update_tags.split(","):
-            print(pairs)
-            print(pairs.split(":"))
-        print(update_tags.split(","))
-        print(update_tags)
-        _update = {
-            k: v for pairs in update_tags.split(",") for k, v in pairs.split(":")
-        }
-
-
-        _old_tags = [k for k in _update.keys()]
-        _new_tags = [v for v in _update.values()]
-
-        print(_old_tags)
-        print(_new_tags)
+            old, new = pairs.split(":")
+            old_tags.append(old)
+            new_tags.append(new)
 
         pongo.update_tags(
-            tags=_new_tags,  # add new tags (query)
+            tags=new_tags,  # add new tags (query)
             raw_query=raw_query,
             tag_query=tags,
             path_query=fast5,
@@ -176,7 +167,7 @@ def query(
         )
 
         pongo.update_tags(
-            tags=_old_tags,  # remove old tags (on same query)
+            tags=old_tags,  # remove old tags (on same query)
             raw_query=raw_query,
             tag_query=tags,
             path_query=fast5,
