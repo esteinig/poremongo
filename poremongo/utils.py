@@ -133,7 +133,7 @@ def multi_insert(
     mydb = myclient["poremongo"]
     mycol = mydb["fast5"]
     print(mycol)
-    print([r.to_json() for r in reads])
+    print([r.to_mongo() for r in reads])
     x = mycol.insert_many([r.to_json() for r in reads])
     print(x)
 
