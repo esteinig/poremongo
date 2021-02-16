@@ -84,7 +84,6 @@ class PoreMongo:
         if connect:
             self.connect(ssh=ssh, is_mock=mock)
 
-
     def _parse_config(self, config: Path or dict):
 
         if isinstance(config, Path):
@@ -255,6 +254,7 @@ class PoreMongo:
 
         pool = mp.Pool(processes=threads)
         for i, file in enumerate(files):
+            print(f"Launching: {file}")
             pool.apply_async(
                 multi_insert,
                 args=(file, self.uri, tags, store_signal, add_signal_info, i, ),

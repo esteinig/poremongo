@@ -132,7 +132,6 @@ def multi_insert(
     client = connect(host=uri)
     f5 = client.db.fast5  # Fast5 collection
     f5.insert(reads)
-
     client.close()  # ! Important, will otherwise refuse more connections
 
     return f"Thread {thread_number}: Inserted read from: {file.name}"
