@@ -132,9 +132,10 @@ def multi_insert(
     myclient = MongoClient("mongodb://localhost:27017/")
     mydb = myclient["poremongo"]
     mycol = mydb["fast5"]
-
-    mycol.insert_many([r.to_json() for r in reads])
-    myclient.close()
+    print(mycol)
+    print([r.to_json() for r in reads])
+    x = mycol.insert_many([r.to_json() for r in reads])
+    print(x)
 
 
 
