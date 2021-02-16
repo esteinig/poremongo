@@ -65,12 +65,12 @@ def index(uri, config, fast5, db, tags, ncpu):
         pongo.multi_index_fast5(
             files=files, tags=tags, threads=ncpu, store_signal=False, add_signal_info=False
         )
+    else:
+        pongo.index_fast5(
+            files=files, tags=tags, store_signal=False, add_signal_info=False, single_insert=True
+        )
+        pongo.disconnect()
 
-    pongo.index_fast5(
-        files=files, tags=tags, store_signal=False, add_signal_info=False, single_insert=True
-    )
-
-    pongo.disconnect()
 
 
 
