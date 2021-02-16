@@ -127,18 +127,8 @@ def multi_insert(
     """
 
     reads = parse_read_documents(file=file, tags=tags, store_signal=store_signal, add_signal_info=add_signal_info)
-    print("From inside process")
-    try:
-        client = connect(
-            host=uri, serverSelectionTimeoutMS=10000
-        )
+    print(f"From inside process: {uri}")
 
-        print(
-            client.server_info()
-        )
-        client.close()  # ! Important, will otherwise refuse more connections
-    except:
-        raise
 
 
 
