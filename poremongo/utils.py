@@ -128,6 +128,9 @@ def multi_insert(
 
     reads = parse_read_documents(file=file, tags=tags, store_signal=store_signal, add_signal_info=add_signal_info)
 
+    print(uri, db)
+    print(reads)
+    
     client = MongoClient(uri)
     collection = client[db].fast5
     collection.insert_many(reads)
