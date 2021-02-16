@@ -132,7 +132,7 @@ def multi_insert(
 
     print("Here")
     fast5 = client.db.fast5  # collection
-    print(fast5)
+    print(client)
 
     fast5.insert_many(reads)
 
