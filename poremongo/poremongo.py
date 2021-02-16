@@ -252,7 +252,7 @@ class PoreMongo:
         for i, file in enumerate(files):
             print(f"Launching: {file}")
             pool.apply_async(
-                multi_insert, args=(file, self.uri, self.db_name, tags, store_signal, add_signal_info, i, ), callback=cbk
+                multi_insert, args=(file, self.uri, tags, store_signal, add_signal_info, i, ), callback=cbk
             )  # Only static methods work, out-sourced functions to utils
         pool.close()
         pool.join()
