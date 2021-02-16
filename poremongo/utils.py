@@ -7,7 +7,7 @@ import json as js
 
 from pathlib import Path
 from poremongo.poremodels import Read
-from mongoengine import connect
+from pymongo import MongoClient
 
 from ont_fast5_api.fast5_interface import get_fast5_file
 
@@ -128,6 +128,13 @@ def multi_insert(
 
     reads = parse_read_documents(file=file, tags=tags, store_signal=store_signal, add_signal_info=add_signal_info)
     print(f"From inside process: {uri}")
+
+    myclient = MongoClient("mongodb://localhost:27017/")
+    mydb = myclient["poremongo"]
+    mycol = mydb["fast5"]
+
+    print(mycol)
+
 
 
 
