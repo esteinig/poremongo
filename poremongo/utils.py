@@ -130,9 +130,11 @@ def multi_insert(
 
     print(uri, db)
     print(reads)
-    
+
     client = MongoClient(uri)
+    print(client)
     collection = client[db].fast5
+    print(collection.stats())
     collection.insert_many(reads)
 
     client.close()  # ! Important, will otherwise refuse more connections
