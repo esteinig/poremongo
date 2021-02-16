@@ -1,12 +1,16 @@
 import os
 import sys
 import shlex
+import uuid
 import subprocess
 import json as js
 
 from pathlib import Path
 from poremongo.poremodels import Read
-from mongoengine.queryset import QuerySet
+from mongoengine import connect
+
+
+from ont_fast5_api.fast5_interface import get_fast5_file
 
 
 def cli_output(read_objects, json_out: str or None, detail: bool):
@@ -29,6 +33,7 @@ def cli_output(read_objects, json_out: str or None, detail: bool):
         for o in read_objects:
             o.pretty_print = not detail
             print(o)
+
 
 def run_cmd(cmd, callback=None, watch=False, shell=False):
 
@@ -90,4 +95,45 @@ def run_cmd(cmd, callback=None, watch=False, shell=False):
     return output
 
 
+def parse_read_documents(file: Path, tags: [str], store_signal: bool = False, add_signal_info: bool = False):
+
+    reads = []
+    with get_fast5_file(str(file), mode="r") as f5:
+        for read in f5.get_reads():
+            unique_identifier = uuid.uuid4()
+            fast5_path = file.absolute()
+            read = Read(
+                fast5=str(fast5_path),
+                uuid=str(unique_identifier),
+                tags=tags,
+                read_id=read.read_id,
+                signal_data=read.get_signal(
+                    start=None, end=None, scale=False
+                ) if store_signal else list(),
+                signal_data_length=len(
+                    read.get_signal(start=None, end=None, scale=False)
+                ) if add_signal_info else 0
+            )
+            reads.append(read)
+
+    return reads
+
+
+def multi_insert(
+    file, uri, tags: list = None, store_signal: bool = False, add_signal_info: bool = False, thread_number: int = 1
+):
+
+    """
+    For multiprocessing use MongoClient directly to spawn new connections to Fast5 collection
+    """
+
+    reads = parse_read_documents(file=file, tags=tags, store_signal=store_signal, add_signal_info=add_signal_info)
+
+    client = connect(host=uri)
+    f5 = client.db.fast5  # Fast5 collection
+    f5.insert(reads)
+
+    client.close()  # ! Important, will otherwise refuse more connections
+
+    return f"Thread {thread_number}: Inserted read from: {file.name}"
 

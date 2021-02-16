@@ -2,17 +2,14 @@
 
 import os
 import time
-import math
 import tqdm
 import json
-import signal
 import random
 import shutil
 import pymongo
 import pandas
 import logging
 import paramiko
-import uuid
 
 import multiprocessing as mp
 
@@ -24,11 +21,10 @@ from datetime import datetime, timedelta
 from mongoengine import connect
 from mongoengine.queryset.visitor import Q
 from pymongo.errors import ServerSelectionTimeoutError
-from ont_fast5_api.fast5_interface import get_fast5_file
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from poremongo.utils import run_cmd
+from poremongo.utils import multi_insert, parse_read_documents
 from poremongo.poremodels import Read
 
 logging.basicConfig(
@@ -88,29 +84,6 @@ class PoreMongo:
         if connect:
             self.connect(ssh=ssh, is_mock=mock)
 
-    def start_mongodb(
-        self, dbpath: Path = Path('~/.poremongo/db'), port: int = 27017
-    ):
-
-        dbpath.mkdir(parents=True, exist_ok=True)
-
-        self.logger.info(f'Running mongod DB client at {dbpath}')
-
-        proc = run_cmd(
-            f'mongod --dbpath {dbpath} --port {port}', shell=True
-        )
-
-        self.mongod_proc = proc
-        self.mongod_path = dbpath
-        self.mongod_pid = int(proc.pid)
-
-        self.logger.info(f'Started MongoDB with pid: {proc.pid}')
-
-    def terminate_mongodb(self):
-
-        self.logger.info(f'Terminated MongoDB with pid: {self.mongod_pid}')
-
-        os.killpg(self.mongod_proc.pid, signal.SIGTERM)
 
     def _parse_config(self, config: Path or dict):
 
@@ -263,47 +236,61 @@ class PoreMongo:
     #     Fast5 Indexing     #
     ##########################
 
-    def index_fast5(
-        self, files: [Path] = None, tags: list = None, store_signal: bool = False, add_signal_info: bool = False, single_insert: bool = False
+    def multi_index_fast5(
+        self, files: [Path], tags: [str], threads: int = 4,
+        store_signal: bool = False, add_signal_info: bool = False
     ):
 
-        """ Main access method to index Fast5 files into MongoDB """
+        self.logger.info(f'Parallel inserts enabled [{threads} threads]')
+
+        # Disconnect to initiate parallel connections
+        if self.is_connected():
+            self.disconnect()
+            self.logger.info('Disconnected from database to initiate parallel database connections')
+
+        logger = self.logger  # Local instance for callback
+
+        def cbk(x):
+            logger.info(x)
+
+        pool = mp.Pool(processes=threads)
+        for i, file in enumerate(files):
+            pool.apply_async(
+                multi_insert,
+                args=(file, self.uri, tags, store_signal, add_signal_info, i, ),
+                callback=cbk
+            )  # Only static methods work, out-sourced functions to utils
+        pool.close()
+        pool.join()
+
+        self.logger.info("Parallel inserts completed")
+
+    def index_fast5(
+        self, files: [Path] = None, tags: [str] = None,
+        store_signal: bool = False, add_signal_info: bool = False,
+        single_insert: bool = True
+    ):
+
+        """ Main access method to index (multi-) Fast5 files into MongoDB """
 
         self.logger.info(f"Indexing signal data ... [ {self.db_name} ]")
 
         docs = []
         for file in files:
-            reads = []
-            with get_fast5_file(str(file), mode="r") as f5:
-                for read in f5.get_reads():
-                    unique_identifier = uuid.uuid4()
-                    fast5_path = file.absolute()
-                    read = Read(
-                        fast5=str(fast5_path),
-                        uuid=str(unique_identifier),
-                        tags=tags,
-                        read_id=read.read_id,
-                        signal_data=read.get_signal(
-                            start=None, end=None, scale=False
-                        ) if store_signal else list(),
-                        signal_data_length=len(
-                            read.get_signal(start=None, end=None, scale=False)
-                        ) if add_signal_info else 0
-                    )
-                    reads.append(read)
+            reads = parse_read_documents(
+                file=file, tags=tags, store_signal=store_signal, add_signal_info=add_signal_info
+            )
 
             if single_insert:
-                try:
-                    Read.objects.insert(reads)
-                    self.logger.info(f"Inserted read documents from: {file}")
-                except:
-                    raise
+                Read.objects.insert(reads)
+                self.logger.info(f"Inserted read documents from: {file}")
             else:
                 docs += reads
 
         if not single_insert:
-            self.logger.info(f"Inserting read documents ... [ {self.db_name} ]")
+            self.logger.info(f"Inserting all read documents ... [ {self.db_name} ]")
             Read.objects.insert(docs)
+
 
     ##########################
     #     Poremongo Tags     #
