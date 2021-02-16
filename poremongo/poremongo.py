@@ -264,14 +264,15 @@ class PoreMongo:
     ##########################
 
     def index_fast5(
-        self, files: [Path] = None, tags: list = None, store_signal: bool = False, add_signal_info: bool = False
+        self, files: [Path] = None, tags: list = None, store_signal: bool = False, add_signal_info: bool = False, single_insert: bool = False
     ):
 
         """ Main access method to index Fast5 files into MongoDB """
 
-        for file in files:
-            self.logger.info(f"Index signal data [ {self.db_name} ]: {file}")
+        self.logger.info(f"Indexing signal data [ {self.db_name} ]")
 
+        docs = []
+        for file in files:
             reads = []
             with get_fast5_file(str(file), mode="r") as f5:
                 for read in f5.get_reads():
@@ -291,11 +292,17 @@ class PoreMongo:
                     )
                     reads.append(read)
 
-            try:
-                Read.objects.insert(reads)
-                self.logger.info(f'Inserted {len(reads)} signal reads with tags [ {", ".join(tags)} ]')
-            except:
-                raise
+            if single_insert:
+                try:
+                    Read.objects.insert(reads)
+                except:
+                    raise
+            else:
+                docs += reads
+
+        if not single_insert:
+            self.logger.info(f"Inserting all read documents [ {self.db_name} ]")
+            Read.objects.insert(docs)
 
     ##########################
     #     Poremongo Tags     #

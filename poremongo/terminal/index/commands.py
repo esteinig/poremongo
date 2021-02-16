@@ -32,7 +32,11 @@ click.option = partial(click.option, show_default=True)
     '--config', '-c', type=Path, default=None,
     help='Path to config file for database connection'
 )
-def index(uri, config, fast5, db, tags):
+@click.option(
+    '--single', '-s', is_flag=True,
+    help='Insert each read in a single operation into the database [false]'
+)
+def index(uri, config, fast5, db, tags, single):
 
     """ Index signal reads from Fast5 files """
 
@@ -57,7 +61,7 @@ def index(uri, config, fast5, db, tags):
     else:
         raise ValueError(f'Fast5 input is neither directory nor file: {fast5}')
 
-    pongo.index_fast5(files=files, tags=tags, store_signal=False, add_signal_info=False)
+    pongo.index_fast5(files=files, tags=tags, store_signal=False, add_signal_info=False, single_insert=single)
 
     pongo.disconnect()
 
