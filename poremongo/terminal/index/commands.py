@@ -33,10 +33,10 @@ click.option = partial(click.option, show_default=True)
     help='Path to config file for database connection'
 )
 @click.option(
-    '--threads', '-t', type=int, default=0,
+    '--ncpu', '-n', type=int, default=0,
     help='Number of threads for multiprocessing inserts into database'
 )
-def index(uri, config, fast5, db, tags, threads):
+def index(uri, config, fast5, db, tags, ncpu):
 
     """ Index signal reads from Fast5 files """
 
@@ -61,9 +61,9 @@ def index(uri, config, fast5, db, tags, threads):
     else:
         raise ValueError(f'Fast5 input is neither directory nor file: {fast5}')
 
-    if threads > 0:
+    if ncpu > 0:
         pongo.multi_index_fast5(
-            files=files, tags=tags,store_signal=False, add_signal_info=False
+            files=files, tags=tags, threads=ncpu, store_signal=False, add_signal_info=False
         )
 
     pongo.index_fast5(
