@@ -35,6 +35,7 @@ logging.basicConfig(
 
 VERSION = '0.4'
 
+
 class PoreMongo:
 
     """ API for PoreMongo """
@@ -51,8 +52,7 @@ class PoreMongo:
         self.db_name = Path(uri).stem
 
         if self.db_name in disallowed:
-            raise ValueError(f"Database can not be named: "
-                             f"{', '.join(disallowed)}")
+            raise ValueError(f"Database can not be named: {', '.join(disallowed)}")
 
         self.uri = uri
         self.verbose = True
@@ -76,10 +76,6 @@ class PoreMongo:
 
         self.db = None  # Client DB
         self.fast5 = None  # Fast5 collection
-
-        self.mongod_proc = None
-        self.mongod_path: Path or None = None
-        self.mongod_pid: int or None = None
 
         if connect:
             self.connect(ssh=ssh, is_mock=mock)
@@ -256,7 +252,7 @@ class PoreMongo:
         for i, file in enumerate(files):
             print(f"Launching: {file}")
             pool.apply_async(
-                multi_insert, args=(file, self.uri, tags, store_signal, add_signal_info, i, ), callback=cbk
+                multi_insert, args=(file, self.uri, self.db_name, tags, store_signal, add_signal_info, i, ), callback=cbk
             )  # Only static methods work, out-sourced functions to utils
         pool.close()
         pool.join()

@@ -7,8 +7,7 @@ import json as js
 
 from pathlib import Path
 from poremongo.poremodels import Read
-from mongoengine import connect
-
+from pymongo import MongoClient
 
 from ont_fast5_api.fast5_interface import get_fast5_file
 
@@ -120,7 +119,7 @@ def parse_read_documents(file: Path, tags: [str], store_signal: bool = False, ad
 
 
 def multi_insert(
-    file, uri, tags: list = None, store_signal: bool = False, add_signal_info: bool = False, thread_number: int = 1
+    file, uri, db, tags: list = None, store_signal: bool = False, add_signal_info: bool = False, thread_number: int = 1
 ):
 
     """
@@ -129,11 +128,10 @@ def multi_insert(
 
     reads = parse_read_documents(file=file, tags=tags, store_signal=store_signal, add_signal_info=add_signal_info)
 
-    print("Running")
+    client = MongoClient(uri)
+    collection = client[db].fast5
+    collection.insert_many(reads)
 
-    client = connect(host=uri)
-    f5 = client.db.fast5  # Fast5 collection
-    f5.insert(reads)
     client.close()  # ! Important, will otherwise refuse more connections
 
     return f"Thread {thread_number}: Inserted read from: {file.name}"
