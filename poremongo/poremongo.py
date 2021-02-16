@@ -243,14 +243,8 @@ class PoreMongo:
             self.disconnect()
             self.logger.info('Disconnected from database to initiate parallel database connections')
 
-        logger = self.logger  # Local instance for callback
-
-        def cbk(x):
-            print(x)
-
         pool = mp.Pool(processes=threads)
         for i, file in enumerate(files):
-            print(f"Launching: {file}")
             pool.apply_async(
                 multi_insert, args=(file, self.uri, tags, store_signal, add_signal_info, i, ), callback=cbk
             )  # Only static methods work, out-sourced functions to utils

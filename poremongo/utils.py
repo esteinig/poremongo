@@ -130,7 +130,7 @@ def multi_insert(
 
     client = connect(host=uri)
 
-    print("Here")
+    print(reads)
     fast5 = client.db.fast5  # collection
     print(client)
 
