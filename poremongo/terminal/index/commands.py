@@ -34,7 +34,8 @@ click.option = partial(click.option, show_default=True)
 )
 @click.option(
     '--single', '-s', is_flag=True,
-    help='Insert each read in a single operation into the database [false]'
+    help='Insert reads from each Fast5 file in a single operation into the database;'
+         'not recommended when using single Fast5 file collections [false]'
 )
 def index(uri, config, fast5, db, tags, single):
 

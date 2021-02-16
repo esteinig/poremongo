@@ -269,7 +269,7 @@ class PoreMongo:
 
         """ Main access method to index Fast5 files into MongoDB """
 
-        self.logger.info(f"Indexing signal data [ {self.db_name} ]")
+        self.logger.info(f"Indexing signal data ... [ {self.db_name} ]")
 
         docs = []
         for file in files:
@@ -295,13 +295,14 @@ class PoreMongo:
             if single_insert:
                 try:
                     Read.objects.insert(reads)
+                    self.logger.info(f"Inserted read documents from: {file}")
                 except:
                     raise
             else:
                 docs += reads
 
         if not single_insert:
-            self.logger.info(f"Inserting all read documents [ {self.db_name} ]")
+            self.logger.info(f"Inserting read documents ... [ {self.db_name} ]")
             Read.objects.insert(docs)
 
     ##########################
