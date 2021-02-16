@@ -133,8 +133,9 @@ def multi_insert(
             host=uri, serverSelectionTimeoutMS=10000
         )
 
-        client.server_info()
-
+        print(
+            client.server_info()
+        )
         client.close()  # ! Important, will otherwise refuse more connections
     except:
         raise
