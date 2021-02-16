@@ -128,9 +128,9 @@ def multi_insert(
 
     reads = parse_read_documents(file=file, tags=tags, store_signal=store_signal, add_signal_info=add_signal_info)
 
-
     client = connect(host=uri)
-    print(client.db)
+
+    print(client)
     fast5 = client.db.fast5  # collection
     print(fast5)
 
