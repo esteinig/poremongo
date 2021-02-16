@@ -250,7 +250,7 @@ class PoreMongo:
         logger = self.logger  # Local instance for callback
 
         def cbk(x):
-            logger.info(x)
+            print(x)
 
         pool = mp.Pool(processes=threads)
         for i, file in enumerate(files):
