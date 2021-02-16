@@ -128,12 +128,11 @@ def multi_insert(
 
     reads = parse_read_documents(file=file, tags=tags, store_signal=store_signal, add_signal_info=add_signal_info)
     print("From inside process")
-    print(reads)
     client = connect(host=uri)
+    print(client)
     fast5 = client.db.fast5  # collection
     fast5.insert(reads)
 
     client.close()  # ! Important, will otherwise refuse more connections
 
-    return
 
