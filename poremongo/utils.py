@@ -133,7 +133,7 @@ def multi_insert(
     collection = db["fast5"]
     collection.insert_many([r.to_mongo().to_dict() for r in reads])
 
-    return f"File {i}: inserted {len(reads)} reads from Fast5"
+    return f"Fast5 file {i}: inserted {len(reads)} reads from Fast5"
 
 
 

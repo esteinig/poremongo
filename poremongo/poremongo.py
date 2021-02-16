@@ -251,7 +251,7 @@ class PoreMongo:
         pool = mp.Pool(processes=threads)
         for i, file in enumerate(files):
             pool.apply_async(
-                multi_insert, args=(file, self.uri, self.db_name, tags, store_signal, add_signal_info, i ), callback=cbk
+                multi_insert, args=(file, self.uri, self.db_name, tags, store_signal, add_signal_info, i, ), callback=cbk
             )  # Only static methods work, out-sourced functions to utils
         pool.close()
         pool.join()
@@ -645,7 +645,7 @@ class PoreMongo:
        proportion: str = None,
        unique: bool = False,
        include_tags: [str] or str = None,
-       exclude_uuid: list = None,
+       exclude_reads: list = None,
        return_documents: bool = True
     ):
 
@@ -669,9 +669,10 @@ class PoreMongo:
             ] if proportion else []
 
         if tags:
-            if exclude_uuid:
+            # using strict read id (preventing sampling of same reads tagged as different docs in DB)
+            if exclude_reads:
                 query_pipeline = [
-                    {"$match": {"uuid": {"$nin": exclude_uuid}}}
+                    {"$match": {"read_id": {"$nin": exclude_reads}}}
                 ]
             else:
                 query_pipeline = []
