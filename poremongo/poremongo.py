@@ -49,8 +49,8 @@ class PoreMongo:
         mock: bool = False
     ):
         disallowed = ['local']
-        self.db_name = Path(uri).stem
 
+        self.db_name = Path(uri).stem
         if self.db_name in disallowed:
             raise ValueError(f"Database can not be named: {', '.join(disallowed)}")
 
@@ -139,8 +139,8 @@ class PoreMongo:
             f'Success! Connected to: {self.decompose_uri()}'
         )
 
-        self.db = self.client.db    # Database connected
-        self.fast5 = self.db.fast5  # Fast5 collection
+        self.db = self.client[self.db_name]    # Database connected
+        self.fast5 = self.db["fast5"] # Fast5 collection
 
         self.logger.info(
             'Default collection for PoreMongo is "fast5"'
@@ -243,10 +243,15 @@ class PoreMongo:
             self.disconnect()
             self.logger.info('Disconnected from database to initiate parallel database connections')
 
+        logger = self.logger
+
+        def cbk(x):
+            logger.info(x)
+
         pool = mp.Pool(processes=threads)
         for i, file in enumerate(files):
             pool.apply_async(
-                multi_insert, args=(file, self.uri, self.db_name, tags, store_signal, add_signal_info, i )
+                multi_insert, args=(file, self.uri, self.db_name, tags, store_signal, add_signal_info, i ), callback=cbk
             )  # Only static methods work, out-sourced functions to utils
         pool.close()
         pool.join()

@@ -21,12 +21,12 @@ click.option = partial(click.option, show_default=True)
     help='Path to single Fast5 or directory of Fast5 (.fast5)'
 )
 @click.option(
-    '--db', '-d', type=str, default='poremongo',
-    help='Database name to create or connect to'
-)
-@click.option(
     '--uri', '-u', type=str, default='local',
     help='MongoDB URI, "local" for localhost:27017 or custom Mongo URI'
+)
+@click.option(
+    '--db', '-d', type=str, default='poremongo',
+    help='Local database name to create or connect to (--uri: local)'
 )
 @click.option(
     '--config', '-c', type=Path, default=None,

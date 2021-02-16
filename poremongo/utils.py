@@ -119,7 +119,7 @@ def parse_read_documents(file: Path, tags: [str], store_signal: bool = False, ad
 
 
 def multi_insert(
-    file, uri, db, tags: list = None, store_signal: bool = False, add_signal_info: bool = False, thread_number: int = 1
+    file, uri, db, tags: list = None, store_signal: bool = False, add_signal_info: bool = False, i: int = 1
 ):
 
     """
@@ -127,14 +127,13 @@ def multi_insert(
     """
 
     reads = parse_read_documents(file=file, tags=tags, store_signal=store_signal, add_signal_info=add_signal_info)
-    print(f"From inside process: {uri}")
 
     client = MongoClient(uri)
     db = client[db]
     collection = db["fast5"]
     collection.insert_many([r.to_mongo().to_dict() for r in reads])
 
-
+    return f"File {i}: inserted reads from Fast5"
 
 
 
