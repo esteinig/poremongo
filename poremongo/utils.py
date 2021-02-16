@@ -119,7 +119,7 @@ def parse_read_documents(file: Path, tags: [str], store_signal: bool = False, ad
 
 
 def multi_insert(
-    file, uri, tags: list = None, store_signal: bool = False, add_signal_info: bool = False, thread_number: int = 1
+    file, uri, db, tags: list = None, store_signal: bool = False, add_signal_info: bool = False, thread_number: int = 1
 ):
 
     """
@@ -129,13 +129,11 @@ def multi_insert(
     reads = parse_read_documents(file=file, tags=tags, store_signal=store_signal, add_signal_info=add_signal_info)
     print(f"From inside process: {uri}")
 
-    myclient = MongoClient("mongodb://localhost:27017/")
-    mydb = myclient["poremongo"]
-    mycol = mydb["fast5"]
-    print(mycol)
-    print([r.to_mongo().to_dict() for r in reads])
-    x = mycol.insert_many([r.to_mongo().to_dict() for r in reads])
-    print(x)
+    client = MongoClient("mongodb://localhost:27017/")
+    db = client[db]
+    collection = db["fast5"]
+    collection.insert_many([r.to_mongo().to_dict() for r in reads])
+
 
 
 

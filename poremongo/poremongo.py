@@ -246,7 +246,7 @@ class PoreMongo:
         pool = mp.Pool(processes=threads)
         for i, file in enumerate(files):
             pool.apply_async(
-                multi_insert, args=(file, self.uri, tags, store_signal, add_signal_info, i, )
+                multi_insert, args=(file, self.uri, self.db_name, tags, store_signal, add_signal_info, i )
             )  # Only static methods work, out-sourced functions to utils
         pool.close()
         pool.join()
