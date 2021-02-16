@@ -130,9 +130,9 @@ def multi_insert(
 
 
     client = connect(host=uri)
-    print(client.server_info())
-    fast5 = client.db.fast5 # Database connected
-    print(fast5.stats())
+    print(client.db)
+    fast5 = client.db.fast5  # collection
+    print(fast5)
 
     fast5.insert_many(reads)
 
