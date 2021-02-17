@@ -754,6 +754,7 @@ class PoreMongo:
             )
 
         if unique:
+            print(results[:10])
             results = list(set(results))
 
         if return_documents:
