@@ -754,8 +754,14 @@ class PoreMongo:
             )
 
         if unique:
-            print(results[:10])
-            results = list(set(results))
+            seen = []
+            unique_results = []
+            for r in results:
+                uuid = r['uuid']
+                if uuid not in seen:
+                    unique_results.append(r)
+                    seen.append(uuid)
+            results = unique_results
 
         if return_documents:
             results = [Read(**result) for result in results]
